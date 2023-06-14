@@ -178,7 +178,7 @@ class SensoryBase(Dataset):
 
         # Actual time-embedding itself
         tmp_stim = tmp_stim[np.arange(NT)[:,None]-np.arange(nlags), :]
-        tmp_stim = torch.permute( tmp_stim, (0,2,1) ).reshape([NT, -1])
+        tmp_stim = tmp_stim.permute((0,2,1)).reshape([NT, -1])
         if verbose:
             print( "  Done.")
         return tmp_stim

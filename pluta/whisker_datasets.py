@@ -53,8 +53,8 @@ class WhiskerData(SensoryBase):
         # Process neurons 
         assert NeurMat.shape[1]-1 == self.NC, "Cell count problem"
 
-        self.robs = torch.tensor( NeurMat[:, 1:], dtype=torch.float32, device=self.device )
-        self.dfs = torch.ones([NT, self.NC], dtype=torch.float32, device=self.device) * self.used_inds[:, None]
+        self.robs = torch.tensor( NeurMat[:, 1:], dtype=torch.float32 )
+        self.dfs = torch.tensor( np.ones([NT, self.NC]) * self.used_inds[:, None], dtype=torch.float32)
 
         self.cells_in = []
         self.set_hemispheres(out_config=hemi, in_config=2)   # default settings
@@ -102,10 +102,10 @@ class WhiskerData(SensoryBase):
 
         self.stim_dims = [2, 1, 1, 1]
         if stim_config == 0:
-            self.stim = self.time_embedding( stim=self.touches[:, :2], nlags=num_lags )
+            self.stim = self.time_embedding( stim=self.touches[:, :2], nlags=num_lags, verbose=False )
             self.stimA = self.time_embedding( stim=self.touches[:, 2:], nlags=num_lags )
         elif stim_config == 1:
-            self.stimA = self.time_embedding( stim=self.touches[:, :2], nlags=num_lags )
+            self.stimA = self.time_embedding( stim=self.touches[:, :2], nlags=num_lags, verbose=False )
             self.stim = self.time_embedding( stim=self.touches[:, 2:], nlags=num_lags )
         else:
             self.stim_dims = [4, 1, 1, 1]
