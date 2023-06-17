@@ -377,13 +377,13 @@ class HartleyDataset(SensoryBase):
 
             # Inelegant hard-coding
             if meta_val == 0:
-                self.OHfreq = deepcopy(oh.reshape([self.NT, -1]))
+                self.OHfreq = deepcopy(oh.reshape([self.NT, -1])).to(self.device)
             elif meta_val == 1:
-                self.OHori = deepcopy(oh.reshape([self.NT, -1]))
+                self.OHori = deepcopy(oh.reshape([self.NT, -1])).to(self.device)
             elif meta_val == 2:
-                self.OHphase = deepcopy(oh.reshape([self.NT, -1]))
+                self.OHphase = deepcopy(oh.reshape([self.NT, -1])).to(self.device)
             elif meta_val == 3:
-                self.OHcolor = deepcopy(oh.reshape([self.NT, -1]))
+                self.OHcolor = deepcopy(oh.reshape([self.NT, -1])).to(self.device)
 
         self.meta_dims = [1, np.sum(self.hartley_dims), 1, 1]
 
@@ -398,7 +398,7 @@ class HartleyDataset(SensoryBase):
         oh = oh.reshape(self.NT, -1)
 
         if time_embed == 2:
-            self.OHcov = self.time_embedding(oh, nlags=num_lags, verbose=False)
+            self.OHcov = self.time_embedding(oh, nlags=num_lags, verbose=False).to(self.device)
         else:
             self.OHcov = torch.tensor(oh, dtype=torch.float32, device=self.device)
 
@@ -464,7 +464,7 @@ class HartleyDataset(SensoryBase):
 
         # Determine whether to be numpy or tensor
         if isinstance(self.robs, torch.Tensor):
-            self.fix_n = torch.tensor(fix_n, dtype=torch.int64, device=self.robs.device)
+            self.fix_n = torch.tensor(fix_n, dtype=torch.int64, device=self.device)
         else:
             self.fix_n = fix_n
     # END .process_fixations()
@@ -477,7 +477,7 @@ class HartleyDataset(SensoryBase):
             assert NCdf == self.dfs.shape[1], "new DF is wrong shape to replace DF for all cells."
             cells = range(self.dfs.shape[1])
         if self.NT < NTdf:
-            self.dfs[:, cells] *= torch.tensor(new_dfs[:self.NT, :], dtype=torch.float32)
+            self.dfs[:, cells] *= torch.tensor(new_dfs[:self.NT, :], dtype=torch.float32, device=self.device)
         else:
             if self.NT > NTdf:
                 # Assume dfs are 0 after new valid region
@@ -485,7 +485,7 @@ class HartleyDataset(SensoryBase):
                 new_dfs = np.concatenate( 
                     (new_dfs, np.zeros([self.NT-NTdf, len(cells)], dtype=np.float32)), 
                     axis=0)
-            self.dfs[:, cells] *= torch.tensor(new_dfs, dtype=torch.float32)
+            self.dfs[:, cells] *= torch.tensor(new_dfs, dtype=torch.float32, device=self.device)
     # END .augment_dfs()
 
     def draw_stim_locations( self, top_corner=None, L=None, row_height=5.0 ):
