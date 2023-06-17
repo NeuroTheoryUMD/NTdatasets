@@ -91,7 +91,7 @@ class WhiskerData(SensoryBase):
         self.construct_drift_design_matrix() 
 
         # Configure stimulus  # default is just touches (onset)
-        self.prepare_stim()
+        #self.prepare_stim()
     # END WhiskerData.__init__()
 
     def prepare_stim( self, stim_config=0, num_lags=None ):
@@ -111,6 +111,7 @@ class WhiskerData(SensoryBase):
             self.stim_dims = [4, 1, 1, 1]
             self.stim = self.time_embedding( stim=self.touches, nlags=num_lags )
             self.stimA = None
+        self.stim_dims[3] = num_lags
     # END WhiskerData.prepare_stim()
 
     def set_hemispheres( self, out_config=0, in_config=0 ):
@@ -119,9 +120,9 @@ class WhiskerData(SensoryBase):
         
         out_config, in_config: 0=left outputs, 1=right outputs, 2=both"""
         if out_config < 2:
-            self.cells_out = self.Rparse[out_config]
+            self.set_cells(self.Rparse[out_config])
         else:
-            self.cells_out = []
+            self.set_cells()
 
         if in_config < 2:
             self.cells_in = self.Rparse[in_config]
