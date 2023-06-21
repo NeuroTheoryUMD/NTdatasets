@@ -90,6 +90,9 @@ class WhiskerData(SensoryBase):
         # Make drift matrix
         self.construct_drift_design_matrix() 
 
+        # Auto-encoder design matrix
+        self.ACinput = None
+
         # Configure stimulus  # default is just touches (onset)
         #self.prepare_stim()
     # END WhiskerData.__init__()
@@ -159,11 +162,43 @@ class WhiskerData(SensoryBase):
         if self.Xdrift is not None:
             out['Xdrift'] = self.Xdrift[idx, :]
 
+        if self.ACinput is not None:
+            out['ACinput'] = self.ACinput[idx, :]
+
         if len(self.covariates) > 0:
             self.append_covariates( out, idx)
 
         return out
     # END WhiskerData.__getitem()
+
+    def autoencoder_design_matrix( self, pre_win=0, post_win=0, blank=0, cells=None ):
+        """Makes auto-encoder input using windows described above, and including the
+        chosen cells. Will put as additional covariate "ACinput" in __get_item__
+        Inputs:
+            pre_win: how many time steps to include before origin
+            post_win: how many time steps to include after origin
+            blank: how many time steps to blank in each direction, including origin
+            """
+
+        if cells is None:
+            cells = np.arange(self.NC)
+        Rraw = deepcopy(self.robs[:, cells])
+        self.ACinput = torch.zeros(Rraw.shape, dtype=torch.float32)
+        nsteps = 0
+        if blank == 0:
+            self.ACinput += Rraw
+            nsteps = 1
+        for ii in range(blank, (pre_win+1)):
+            self.ACinput[ii:, :] += Rraw[:(-ii), :]
+            nsteps += 1
+        for ii in range(blank, (post_win+1)):
+            self.ACinput[:(-ii), :] += Rraw[ii:, :]
+            nsteps += 1
+        assert nsteps > 0, "autoencoder design: invalid parameters"
+        self.ACinput *= 1.0/nsteps
+        self.ACinput *= self.dfs[:, cells]
+    # END autoencoder_design_matrix
+
 
     def WTAs( self, r0=5, r1=30):
         """
