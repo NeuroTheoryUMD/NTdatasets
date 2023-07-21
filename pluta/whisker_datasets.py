@@ -129,6 +129,37 @@ class WhiskerData(SensoryBase):
             self.cells_in = []
     # END WhiskerData.set_hemispheres
 
+    def construct_XLV( self, tent_spacing=12, cueduncued=False ):
+        """Constructs tent-basis-style trial-based tent function
+        Inputs: 
+            num_tents: default 11
+            cueduncued: whether to fit separate kernels to cued/uncued
+            """
+        # automatically wont have any anchors past min_trial_size
+        anchors = np.arange(0, self.min_trial_size, tent_spacing) 
+        # Generate master tent_basis
+        trial_tents = self.design_matrix_drift(
+            self.max_trial_size, anchors, zero_left=False, zero_right=True, const_right=False)
+        num_tents = trial_tents.shape[1]
+
+        if cueduncued:
+            self.Xadapt = torch.zeros((self.NT, 2*num_tents), dtype=torch.float32)
+        else:
+            self.Xadapt = torch.zeros((self.NT, num_tents), dtype=torch.float32)
+
+        for tr in range(self.Ntr):
+            L = len(self.block_inds[tr])
+            if cueduncued:
+                tmp = torch.zeros([L, 2*num_tents], dtype=torch.float32) 
+                if self.TRcued[tr] < 0:
+                    tmp[:, range(num_tents, 2*num_tents)] = torch.tensor(trial_tents[:L, :], dtype=torch.float32)
+                else:
+                    tmp[:, range(num_tents)] = torch.tensor(trial_tents[:L, :], dtype=torch.float32)
+                self.Xadapt[self.block_inds[tr], :] = deepcopy(tmp)
+            else:
+                self.Xadapt[self.block_inds[tr], :] = torch.tensor(trial_tents[:L, :], dtype=torch.float32)
+    # END HNdataset.construct_Xadapt()
+
     def __getitem__(self, idx):
         if len(self.cells_out) == 0:
             out = {'stim': self.stim[idx, :],
