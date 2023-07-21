@@ -377,13 +377,13 @@ class HartleyDataset(SensoryBase):
 
             # Inelegant hard-coding
             if meta_val == 0:
-                self.OHfreq = deepcopy(oh.reshape([self.NT, -1]))
+                self.OHfreq = deepcopy(oh.reshape([self.NT, -1])).to(self.device)
             elif meta_val == 1:
-                self.OHori = deepcopy(oh.reshape([self.NT, -1]))
+                self.OHori = deepcopy(oh.reshape([self.NT, -1])).to(self.device)
             elif meta_val == 2:
-                self.OHphase = deepcopy(oh.reshape([self.NT, -1]))
+                self.OHphase = deepcopy(oh.reshape([self.NT, -1])).to(self.device)
             elif meta_val == 3:
-                self.OHcolor = deepcopy(oh.reshape([self.NT, -1]))
+                self.OHcolor = deepcopy(oh.reshape([self.NT, -1])).to(self.device)
 
         self.meta_dims = [1, np.sum(self.hartley_dims), 1, 1]
 
@@ -398,7 +398,7 @@ class HartleyDataset(SensoryBase):
         oh = oh.reshape(self.NT, -1)
 
         if time_embed == 2:
-            self.OHcov = self.time_embedding(oh, nlags=num_lags, verbose=False)
+            self.OHcov = self.time_embedding(oh, nlags=num_lags, verbose=False).to(self.device)
         else:
             self.OHcov = torch.tensor(oh, dtype=torch.float32, device=self.device)
 
@@ -464,7 +464,7 @@ class HartleyDataset(SensoryBase):
 
         # Determine whether to be numpy or tensor
         if isinstance(self.robs, torch.Tensor):
-            self.fix_n = torch.tensor(fix_n, dtype=torch.int64, device=self.robs.device)
+            self.fix_n = torch.tensor(fix_n, dtype=torch.int64, device=self.device)
         else:
             self.fix_n = fix_n
     # END .process_fixations()
@@ -477,7 +477,7 @@ class HartleyDataset(SensoryBase):
             assert NCdf == self.dfs.shape[1], "new DF is wrong shape to replace DF for all cells."
             cells = range(self.dfs.shape[1])
         if self.NT < NTdf:
-            self.dfs[:, cells] *= torch.tensor(new_dfs[:self.NT, :], dtype=torch.float32)
+            self.dfs[:, cells] *= torch.tensor(new_dfs[:self.NT, :], dtype=torch.float32, device=self.device)
         else:
             if self.NT > NTdf:
                 # Assume dfs are 0 after new valid region
@@ -485,10 +485,10 @@ class HartleyDataset(SensoryBase):
                 new_dfs = np.concatenate( 
                     (new_dfs, np.zeros([self.NT-NTdf, len(cells)], dtype=np.float32)), 
                     axis=0)
-            self.dfs[:, cells] *= torch.tensor(new_dfs, dtype=torch.float32)
+            self.dfs[:, cells] *= torch.tensor(new_dfs, dtype=torch.float32, device=self.device)
     # END .augment_dfs()
 
-    def draw_stim_locations( self, top_corner=None, L=None, row_height=5.0 ):
+    def draw_stim_locations( self, top_corner=None, L=60, row_height=5.0 ):
         import matplotlib.pyplot as plt
         from matplotlib.patches import Rectangle
 
@@ -511,11 +511,11 @@ class HartleyDataset(SensoryBase):
         #print(x0,x1,y0,y1)
         for ii in range(nLAM):
             ax.add_patch(
-                Rectangle((lamlocs[0, ii], lamlocs[1, ii]), 60, 60, 
+                Rectangle((lamlocs[0, ii], lamlocs[1, ii]), L, L, 
                 edgecolor='red', facecolor='none', linewidth=1.5))
         clrs = ['blue', 'green', 'purple']
         for ii in range(nET):
-            ax.add_patch(Rectangle((ETlocs[0,ii], ETlocs[1,ii]), 60, 60, 
+            ax.add_patch(Rectangle((ETlocs[0,ii], ETlocs[1,ii]), L, L, 
                                 edgecolor=clrs[ii], facecolor='none', linewidth=1))
         if fixloc is not None:
             ax.add_patch(Rectangle((fixloc[0]-fixsize-1, fixloc[1]-fixsize-1), fixsize*2+1, fixsize*2+1, 
@@ -721,8 +721,8 @@ class HartleyDataset(SensoryBase):
                 robs_tmp =  self.robs[:, self.cells_out]
                 dfs_tmp =  self.dfs[:, self.cells_out]
 
-                out['robs'] = robs_tmp[idx, :]
-                out['dfs'] = dfs_tmp[idx, :]
+            out['robs'] = robs_tmp[idx, :]
+            out['dfs'] = dfs_tmp[idx, :]
 
         if self.speckled:
             if self.Mtrn_out is None:
