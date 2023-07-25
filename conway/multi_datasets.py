@@ -43,6 +43,7 @@ class MultiClouds(SensoryBase):
         luminance_only=True,
         binocular = False, # whether to include separate filters for each eye
         eye_config = 2,  # 0 = all, 1, -1, and 2 are options (2 = binocular)
+        cell_lists = None,
         # device=torch.device('cpu'),
         # Dataset-specitic inputs
         # Stim setup -- if dont want to assemble stimulus: specify all things here for default options
@@ -68,6 +69,8 @@ class MultiClouds(SensoryBase):
         #self.time_embed = time_embed
         #self.preload = preload
 
+        self.Nexpts = len(filenames)
+
         # Stim-specific
         self.eye_config = eye_config
         self.binocular = binocular
@@ -75,10 +78,10 @@ class MultiClouds(SensoryBase):
         self.includeMUs = include_MUs
         self.generate_Xfix = False
         self.output_separate_eye_stim = False
+        self.expt_stims = [None]*self.Nexpts
 
         self.start_t = 0
         self.drift_interval = drift_interval
-
 
         # Set up to store default train_, val_, test_inds -- in SensoryBase
         #self.test_inds = None
@@ -90,7 +93,6 @@ class MultiClouds(SensoryBase):
         #self.stim = []
         #self.dfs = []
         #self.robs = []
-        self.fix_n = []
         self.used_inds = []
         self.NT = 0
 
@@ -98,8 +100,6 @@ class MultiClouds(SensoryBase):
         #self.num_blks = np.zeros(len(filenames), dtype=int)
         self.data_threshold = 6  # how many valid time points required to include saccade?
         #self.file_index = [] # which file the block corresponds to
-        self.sacc_inds = None
-        self.stim_shifts = None
         #self.stim_dims = None
 
         #self.unit_ids = []
@@ -114,48 +114,121 @@ class MultiClouds(SensoryBase):
         #self.cells_out = []  # can be list to output specific cells in get_item
         #self.avRs = None
 
-        Nfiles = len(filenames)
         self.fhandles = [h5py.File(os.path.join(datadir, sess + '.mat'), 'r') for sess in self.filenames]
-        self.file_info = [None] * Nfiles
-        self.NTfile = np.zeros(Nfiles, dtype=np.int64)
-        self.NCfile = np.zeros(Nfiles, dtype=np.int64)
+        self.file_info = [None] * self.Nexpts
+        self.fileNT = np.zeros(self.Nexpts, dtype=np.int64)
+        self.fileNBLK = np.zeros(self.Nexpts, dtype=np.int64)
+        self.fileNC = np.zeros(self.Nexpts, dtype=np.int64)
+        self.file_tstart = np.zeros(self.Nexpts, dtype=np.int64)
+        self.file_blkstart = np.zeros(self.Nexpts, dtype=np.int64)
 
-        tcount = 0
-        tranges = [None] * Nfiles
-        for ff in range(len(filenames)):
+        tcount, blkcount = 0, 0
+        self.tranges = [None] * self.Nexpts
+        self.cranges = [None] * self.Nexpts
+        self.block_inds = []
+
+        # Structure of file on time/trial level
+        for ff in range(self.Nexpts):
             # get hdf5 file handles
             self.file_info[ff] = self.read_file_info(ff, filenames[ff])
-            self.NCfile[ff] = self.file_info[ff]['NC']
+            self.fileNC[ff] = self.file_info[ff]['NC']
 
-            # Determine valid t-ranges based on binocular choice
-            if self.eye_config == 0:
-                NT = self.file_info[ff]['NT']
-                tranges.append( np.arange(self.NTfile[ff]) )
+            # Consolidate valid t-ranges based on binocular choice
+            self.tranges[ff] = self.NTfile[ff]['tmap']
+            self.cranges[ff] = np.arange(self.fileNC[ff], dtype=np.int64)
+
+            # Make one long block-list
+            NBLK = self.file_info[ff]['block_inds'].shape[1]
+            for bb in range(NBLK):
+                self.block_inds.append( tcount + np.arange(self.file_info[ff]['block_inds'][bb, :]) )
+            self.fileNBLK[ff] = self.file_info[ff]['NT']
+            self.file_blkstart[ff] = blkcount
+            blkcount += NBLK
+
+            self.fileNT[ff] = self.file_info[ff]['NT']
+            self.file_tstart[ff] = tcount
+            tcount += self.file_info[ff]['NT']
+
+        # Assemble robs and dfs given current information
+        if cell_lists is None:
+            self.modify_included_cells(cell_lists)
+            # this will automatically assemble_robs at the end
+        else:
+            self.assemble_robs()
+
+        # Determine total experiment time and number of cells
+        self.NT = tcount
+        self.NC = np.sum(self.fileNC)
+        print( "%d total time steps, %d units"%(self.NT, self.NC) )
+
+        # Assemble current list of fixations
+        self.sacc_inds = [None]*self.Nexpts
+        self.stim_shifts = [None]*self.Nexpts
+        to_assemble = True
+        for ff in range(self.Nexpts):
+            sacc_inds = np.array(self.fhandles[ff]['sacc_inds'], dtype=np.int64)
+            if len(sacc_inds) < 2: # assume its no good
+                sacc_inds = None
+                to_assemble = False
             else:
-                tranges.append( np.where( self.file_info[ff]['LRpresent'] == self.eye_config)[0] )
-                NT = len(tranges[-1])
-            tcount += NT
-            self.NTfile[ff] = tcount
+                if len(sacc_inds.shape) > 1:
+                    sacc_inds[:, 0] += -1  # convert to python so range works
+                else:
+                    sacc_inds = None
+                    to_assemble = False
 
-        if luminance_only:
-            if self.dims[0] > 1:
-                print("Reducing stimulus channels (%d) to first dimension"%self.dims[0])
-            self.dims[0] = 1
+            self.sacc_inds[ff] = deepcopy(sacc_inds)
 
-        if self.binocular:
-            self.dims[0] *= 2
+        if to_assemble:
+            self.assemble_saccade_inds()
 
-        # Determine valid_inds over all datasets and cross-validation splits?
-        # generate "default valid_inds" for each dataset, and default xval
-        # Can be modified by uploading new data_filters -- which also might drop cells?
+        ### Construct drift term if relevant
+        if self.drift_interval is None:
+            self.Xdrift = None
+        else:
+            Nanchors_tot = 0
+            # Make drift for each dataset
+            Xdrift_expts = []
+            for ff in range(self.Nexpts):
+                NBL = self.fileNBLK[ff]
+                Nanchors = np.ceil(NBL/self.drift_interval).astype(int)
+                anchors = np.zeros(Nanchors, dtype=np.int64)
+                for bb in range(Nanchors):
+                    anchors[bb] = self.block_inds[self.drift_interval*bb][0]
+                #self.Xdrift = utils.design_matrix_drift( self.NT, anchors, zero_left=False, const_right=True)
+                Xdrift_expts.append(self.design_matrix_drift( self.NT, anchors, zero_left=False, const_right=True))
+                Nanchors_tot += Nanchors
 
-        # Default processing of fixations? also needs to be reloaded
-        # how change when have ground-truth eye-position in dataset?
-        
+            # Assemble whole drift matrix
+            self.Xdrift = np.zeros( [self.NT, Nanchors_tot], dtype=np.float32 )
+            anchor_count, tcount = 0, 0
+            for ff in range(self.Nexpts):
+                tslice = np.zeros( np.zeros( [self.file_info[ff]['NT'], Nanchors_tot], dtype=np.float32 ) )
+                tslice[:, anchor_count+np.arange(Xdrift_expts[ff].shape[1])] = Xdrift_expts[ff]
+                self.Xdrift[tcount+np.arange(self.file_info[ff]['NT']), :] = deepcopy(tslice)
+
+            # Determine overall valid-inds and cross-validation indices
+            self.create_val_indices()
+            # how divide up train and test inds -- definitely by blocks
+            self.val_blks, self.train_blocks = [], []
+            folds = 5
+            random_gen = False
+            for ff in range(self.Nexpts):
+                Nblks = self.file_info['trial_info'].shape[1]
+                val_blk_e, tr_blk_e = self.fold_sample(Nblks, folds, random_gen=random_gen)
+                self.val_blks.append(deepcopy(val_blk_e)+self.blkstart)
+                self.train_blks.append(deepcopy(tr_blk_e)+self.blkstart)
+
+            self.val_inds, self.train_inds = [], []
+            for bb in self.val_blks:
+                self.val_inds = np.concatenate( (self.val_inds, self.block_inds[bb]), axis=0 )
+            for bb in self.train_blks:
+                self.train_inds = np.concatenate( (self.train_inds, self.block_inds[bb]), axis=0 )
     # END MultiClouds.__init__
 
     def read_file_info( self, file_n, filename ):
         """Initial processing of each file to pull out salient info for building stim and responses"""
+
         f = self.fhandles[file_n]
         NT, NSUs = f['Robs'].shape
         # Check for valid RobsMU
@@ -180,6 +253,7 @@ class MultiClouds(SensoryBase):
         if blk_inds.shape[0] == 2:
             print('WARNING: blk_inds is stored old-style: transposing')
             blk_inds = blk_inds.T
+        NBLK = blk_inds.shape[1]
 
         # Stim information
         fix_loc = np.array(f['fix_location'], dtype=np.in64).squeeze()
@@ -187,9 +261,9 @@ class MultiClouds(SensoryBase):
         stim_scale = np.array(f['stimscale'], dtype=np.in64).squeeze()
         stim_locsLP = np.array(f['stim_location'], dtype=np.in64),
         stim_locsET = np.array(f['ETstim_location'], dtype=np.in64)
-        self.blockID = np.array(f['blockID'], dtype=np.int64).squeeze()
-        self.ETtrace = np.array(f['ETtrace'], dtype=np.float32)
-        self.ETtraceHR = np.array(f['ETtrace_raw'], dtype=np.float32)
+        blockIDs = np.array(f['blockID'], dtype=np.int64).squeeze()  # what is this?
+        #self.ETtrace = np.array(f['ETtrace'], dtype=np.float32)
+        #self.ETtraceHR = np.array(f['ETtrace_raw'], dtype=np.float32)
 
         # Binocular information
         Lpresent = np.array(f['useLeye'], dtype=int)[:,0]
@@ -198,12 +272,42 @@ class MultiClouds(SensoryBase):
 
         valid_inds = np.array(f['valid_data'], dtype=np.int64)-1  #range(self.NT)  # default -- to be changed at end of init
 
+        # Parse timing and block information given eye_config
+        if self.eye_config == 0:
+            tmap = np.arange(NT)
+            bmap = np.arange(NBLK)
+            block_inds = deepcopy(blk_inds)
+        else:
+            tmap = np.where(LRpresent == self.eye_config)[0]
+ 
+            # Remap valid_inds to smaller trage
+            val_track = np.zeros(NT, dtype=np.int64)
+            val_track[valid_inds] = 1
+            valid_inds = np.where(val_track[tmap] == 1)[0]
+
+            NT = len(tmap)
+ 
+            # Remap block_inds to reduced map
+            bmap = []
+            tcount = 0
+            block_inds = []
+            for bb in range(NBLK):
+                if LRpresent[blk_inds[bb,0]] == self.eye_config:
+                    bmap.append(bb)
+                    NTblk = blk_inds[bb,1]-blk_inds[bb,0] + 1
+                    block_inds.append([tcount, tcount+NTblk])
+                    tcount += NTblk
+            block_inds = np.array(block_inds, dtype=np.int64)
+            # might have to modify blockIDs -- not done yet
+
         return {
             'filename': filename,
             'NT': NT,
-            'trial_info': blk_inds, 
+            'tmap': tmap, 
+            'trial_info': block_inds, 
             'LRpresent': LRpresent,
             'valid_inds': valid_inds.squeeze(),
+            'blockIDs': blockIDs, # What is this again?  
             'NSUs': NSUs,
             'NMUs': NMUs,
             'channel_map': channel_map,
@@ -214,6 +318,286 @@ class MultiClouds(SensoryBase):
             'stim_locsLP': stim_locsLP,
             'stim_locsET': stim_locsET}
     # END MultiClouds.read_file_info()  
+
+    def modify_included_cells(self, clists, expt_n=None):
+        if expt_n is None:
+            expts = np.arange(self.Nexpts)
+            assert len(clists) == self.Nexpts, "Number of cell_lists must match number of experiments."
+        else:
+            expts = [expt_n]
+            
+        for ff in expts:
+            if len(clists[ff]) > 0:
+                assert np.max(clists[ff]) < self.file_info[ff]['NC']
+                self.cranges[ff] = deepcopy(clists[ff])
+            else:
+                self.cranges[ff] = deepcopy(np.arange(self.file_info[ff]['NC']))
+            self.fileNC[ff] = len(self.cranges[ff])
+        self.NC = np.sum(self.fileNC)
+
+        self.assemble_robs()
+    # END MultiClouds.modify_included_cells()
+
+    def assemble_robs(self):
+        """Takes current information (robs and dfs) to make robs and dfs (full version)
+        Note this can be replaced by using the spike times explicitly"""
+
+        self.robs = np.zeros( [self.NT, self.NC], dtype=np.uint8 )
+        self.dfs = np.zeros( [self.NT, self.NC], dtype=np.uint8 )
+
+        tcount, ccount = 0, 0
+        for ff in range(self.Nexpts):
+            NTexpt = self.file_info[ff]['NT']
+            NSUs= self.file_info[ff]['NSUs']
+            # Classify cell-lists in terms of SUs and MUc
+            su_list = self.cell_lists[ff][self.cell_lists[ff] < NSUs]
+            R_tslice = np.zeros( [NTexpt, self.NC], dtype=np.int64 )
+            df_tslice = np.zeros( [NTexpt, self.NC], dtype=np.uint8 )
+
+            R_tslice[:, ccount+np.arange(NSUs)] = np.array(self.fhandles[ff]['Robs'], dtype=np.int64)[:, su_list]
+            df_tslice[:, ccount+np.arange(NSUs)] = np.array(self.fhandles[ff]['datafilts'], dtype=np.uint8)[:, su_list]
+            ccount += len(su_list)
+
+            if self.include_MUs:
+                NMUs= self.file_info[ff]['NMUs']
+                mu_list = self.cell_lists[ff][self.cell_lists[ff] >= NSUs]-NSUs
+                R_tslice[:, ccount+np.arange(NMUs)] = np.array(self.fhandles[ff]['RobsMU'], dtype=np.int64)[:, mu_list]
+                df_tslice[:, ccount+np.arange(NMUs)] = np.array(self.fhandles[ff]['datafiltsMU'], dtype=np.uint8)[:, mu_list]
+                ccount += len(mu_list)
+
+            # Check that clipping to uint8 wont screw up any robs
+            robs_ceil = np.where(R_tslice > 255)
+            if len(robs_ceil[0]) > 0:
+                print( "Neurons in expt %d have single-bin spike counts above 255:"%ff, robs_ceil[1] )
+                # Currently do nothing -- this willbe modded: but if problems should probably make dfs = 0 there
+
+            # Write tslice into 
+            self.robs[tcount+np.arange(NTexpt), :] = deepcopy( R_tslice.astype(np.uint8) )
+            self.dfs[tcount+np.arange(NTexpt), :] = deepcopy( df_tslice )
+
+            tcount += NTexpt
+
+    # END MultiClouds.assemble_robs()
+
+    def list_expts( self ):
+        """Show filenames with experiment number"""
+        for ff in range(self.Nexpts):
+            print('  %2d  %s'%(ff, self.filenames[ff]) )
+        
+    def updateDF( self, expt_n, dfs, reduce_cells=True ):
+        """Import updated DF for given experiment, as numbered (can see with 'list_expts')
+        Will check for neurons with no robs and reduce robs and dataset if reduce_cells=True"""
+
+        assert expt_n < self.Nexpts, "updateDF: expt_n too large: not that many experiments"
+
+        # if eye_config, then want to replace whole DFs, or relevant DFs 
+        if dfs.shape[0] != self.file_info[expt_n]['NT']:
+            # Assume need to use trange
+            dfs = dfs[self.tranges[expt_n], :]
+        assert dfs.shape[0] == self.file_info[expt_n]['NT'], "DF file mismatch: wrong length"
+
+        # Replace dfs with updated
+        trange = self.file_tstart[expt_n] + np.arange(dfs.shape[0])
+        df_tslice = deepcopy( self.dfs[trange, :] )
+        crange = np.arange(self.fileNC[expt_n])
+        if expt_n > 0:
+            crange += np.sum(self.fileNC[:expt_n])
+        df_tslice[:, crange] = dfs.astype(np.unit8)
+        self.dfs[trange, :] = deepcopy(df_tslice)
+
+        if reduce_cells:
+            elim_cells = np.where(np.sum(dfs, axis=0) == 0)[0]
+            if elim_cells > 0:
+                print('  reduce_cells not implemented yet')
+                print( ' Cells to reduce:', elim_cells )
+    # END MultiClouds.updateDF()
+
+    def assemble_saccade_inds( self ):
+        print('Currently not implemented -- needs to have microsaccades labeled well with time first')
+
+    def is_fixpoint_present( self, boxlim ):
+        """Return if any of fixation point is within the box given by top-left to bottom-right corner"""
+        if self.fix_location is None:
+            return False
+        fix_present = True
+        if self.stim_location.shape[1] == 1:
+            # if there is multiple windows, needs to be manual: so this is the automatic check:
+            for dd in range(2):
+                if (self.fix_location[dd]-boxlim[dd] <= -self.fix_size):
+                    fix_present = False
+                if (self.fix_location[dd]-boxlim[dd+2] > self.fix_size):
+                    fix_present = False
+        return fix_present
+    # END .is_fixpoint_present
+
+    def construct_stimulus(
+            self, expt_n=None,
+            which_stim=None, top_corner=None, L=None,  # position of stim
+            time_embed=0, num_lags=10,
+            shifts=None, BUF=20, # shift buffer
+            shift_times=None, # So that can put partial-shifts over time range in stimulus
+            fixdot=0 ):
+        """This assembles a stimulus from the raw numpy-stored stimuli into self.stim
+        which_stim: determines what stimulus is assembled from 'ET'=0, 'lam'=1, None
+            If none, will need top_corner present: can specify with four numbers (top-left, bot-right)
+            or just top_corner and L
+        which is torch.tensor on default device
+        stim_wrap: only works if using 'which_stim', and will be [hwrap, vwrap]"""
+
+        assert expt_n is not None, "CONSTRUCT_STIMULUS: must specify expt_n"
+        # Delete existing stim and clear cache to prevent memory issues on GPU
+        if self.stims[expt_n] is not None:
+            del self.stims[expt_n]
+            self.stim = None
+            torch.cuda.empty_cache()
+
+        need2crop = False
+
+        if which_stim is not None:
+            assert L is None, "CONSTRUCT_STIMULUS: cannot specify L if using which_stim (i.e. prepackaged stim)"
+            L = self.dims[1]
+            if not isinstance(which_stim, int):
+                if which_stim in ['ET', 'et', 'stimET']:
+                    which_stim=0
+                else:
+                    which_stim=1
+            if which_stim == 0:
+                print( "Stim #%d: using ET stimulus", expt_n )
+                stim_tmp = np.array(self.fhandles[expt_n]['stimET'], dtype=np.uint8)
+                #self.stim_pos = self.stim_locationET[:,0]
+            else:
+                print( "Stim #%d: using laminar probe stimulus", expt_n )
+                stim_tmp = np.array(self.fhandles[expt_n]['stim'], dtype=np.uint8)
+                #self.stim_pos = self.stim_location[:, 0]
+
+            if self.luminance_only:
+                stim_tmp = stim_tmp[self.tranges[expt_n], [0], ...]
+            else:
+                stim_tmp = stim_tmp[self.tranges[expt_n], ...]
+
+            # Forget binocular for now
+            if self.binocular:
+                print('currently not implemented')
+
+        else:
+            assert top_corner is not None, "Need top corner if which_stim unspecified"
+            # Assemble from combination of ET and laminer probe (NP) stimulus
+            if len(top_corner) == 4:
+                stim_pos = top_corner
+                #L = self.stim_pos[2]-self.stim_pos[0]
+                assert stim_pos[3]-stim_pos[1] == stim_pos[2]-stim_pos[0], "Stim must be square (for now)"
+            else:
+                if L is None:
+                    L = self.dims[1]
+                self.stim_pos = [top_corner[0], top_corner[1], top_corner[0]+L, top_corner[1]+L]
+
+            if shifts is not None:
+                need2crop = True
+                # Modify stim window by 20-per-side
+                self.stim_pos = [
+                    stim_pos[0]-BUF,
+                    stim_pos[1]-BUF,
+                    stim_pos[2]+BUF,
+                    stim_pos[3]+BUF]
+                print( "  Stim expansion for shift:", stim_pos)
+
+            L = stim_pos[2]-stim_pos[0]
+            assert stim_pos[3]-stim_pos[1] == L, "Stimulus not square"
+
+            stimET = np.array(self.fhandles[expt_n]['stimET'], dtype=np.uint8)
+            stimLP = np.array(self.fhandles[expt_n]['stim'], dtype=np.uint8)
+            if self.luminance_only:
+                stimET = stimET[self.tranges[expt_n], [0], ...]
+                stimLP = stimLP[self.tranges[expt_n], [0], ...]
+                num_clr = 1
+            else:
+                stimET = stimET[self.tranges[expt_n], ...]
+                stimLP = stimLP[self.tranges[expt_n], ...]
+                num_clr = 3
+
+            NT = self.fileNT[expt_n]
+            newstim = np.zeros( [NT, num_clr, L, L] )
+            for ii in range(self.stim_location.shape[1]):
+                OVLP = self.rectangle_overlap_ranges(stim_pos, self.stim_location[:, ii])
+                if OVLP is not None:
+                    print( "  Writing lam stim %d: overlap %d, %d"%(ii, len(OVLP['targetX']), len(OVLP['targetY'])))
+                    strip = deepcopy(newstim[:, :, OVLP['targetX'], :]) #np.zeros([self.NT, num_clr, len(OVLP['targetX']), L])
+                    strip[:, :, :, OVLP['targetY']] = deepcopy((stimLP[:, :, OVLP['readX'], :][:, :, :, OVLP['readY']]))
+                    newstim[:, :, OVLP['targetX'], :] = deepcopy(strip)
+                
+            for ii in range(self.stim_locationET.shape[1]):
+                OVLP = self.rectangle_overlap_ranges(stim_pos, self.stim_locationET[:,ii])
+                if OVLP is not None:
+                    print( "  Writing ETstim %d: overlap %d, %d"%(ii, len(OVLP['targetX']), len(OVLP['targetY'])))
+                    strip = deepcopy(newstim[:, :, OVLP['targetX'], :])
+                    strip[:, :, :, OVLP['targetY']] = deepcopy((stimET[:, :, OVLP['readX'], :][:, :, :, OVLP['readY']]))
+                    newstim[:, :, OVLP['targetX'], :] = deepcopy(strip) 
+
+            stim = torch.tensor( newstim, dtype=torch.float32, device=self.device )
+
+        #print('Stim shape', self.stim.shape)
+        # Note stim stored in numpy is being represented as full 3-d + 1 tensor (time, channels, NX, NY)
+        self.stim_dims = [self.dims[0], L, L, 1]
+
+        # Insert fixation point
+        if (fixdot is not None) and self.is_fixpoint_present( self.stim_pos ):
+            fixranges = [None, None]
+            for dd in range(2):
+                fixranges[dd] = np.arange(
+                    np.maximum(self.fix_location[dd]-self.fix_size-stim_pos[dd], 0),
+                    np.minimum(self.fix_location[dd]+self.fix_size+1, stim_pos[dd+2])-stim_pos[dd] 
+                    ).astype(int)
+            # Write the correct value to stim
+            #print(fixranges)
+            assert fixdot == 0, "Haven't yet put in other fixdot settings than zero" 
+            #strip = deepcopy(self.stim[:, :, fixranges[0], :])
+            #strip[:, :, :, fixranges[1]] = 0
+            #self.stim[:, :, fixranges[0], :] = deepcopy(strip) 
+            print('  Adding fixation point')
+            for xx in fixranges[0]:
+                self.stim[:, :, xx, fixranges[1]] = 0
+
+        self.stim_shifts = shifts
+        if self.stim_shifts is not None:
+            # Would want to shift by input eye positions if input here
+            #print('eye-position shifting not implemented yet')
+            print('  Shifting stim...')
+            if shift_times is None:
+                self.stim = self.shift_stim( shifts, shift_times=shift_times, already_lagged=False )
+            else:
+                self.stim[shift_times, ...] = self.shift_stim( shifts, shift_times=shift_times, already_lagged=False )
+
+        # Reduce size back to original If expanded to handle shifts
+        if need2crop:
+            #assert self.stim_crop is None, "Cannot crop stim at same time as shifting"
+            self.crop_stim( [BUF, L-BUF-1, BUF, L-BUF-1] )  # move back to original size
+            self.stim_crop = None
+            L = L-2*BUF
+            self.stim_dims[1] = L
+            self.stim_dims[2] = L
+        else:
+            if self.stim_crop is not None:
+                self.crop_stim()
+
+        if time_embed is not None:
+            self.time_embed = time_embed
+        if time_embed > 0:
+            #self.stim_dims[3] = num_lags  # this is set by time-embedding
+            if time_embed == 2:
+                self.stim = self.time_embedding( self.stim, nlags = num_lags )
+        # now stimulus is represented as full 4-d + 1 tensor (time, channels, NX, NY, num_lags)
+
+        self.num_lags = num_lags
+
+        # Flatten stim 
+        self.stim = self.stim.reshape([self.NT, -1])
+        print( "  Done" )
+    # END .construct_stimulus()
+
+    def assemble_stimulus( self ):
+        print('need to assemble the thing')
+    # END .assemble_stimulus()
+
 
     def preload_numpy(self):
         """Note this loads stimulus but does not time-embed"""
@@ -290,22 +674,6 @@ class MultiClouds(SensoryBase):
                     if self.stimET is not None:
                         self.stimET[inds, ...] = np.array(fhandle['stimET'], dtype=np.float32)
 
-            """ Robs and DATAFILTERS"""
-            robs_tmp = np.zeros( [len(inds), self.NC], dtype=np.float32 )
-            dfs_tmp = np.zeros( [len(inds), self.NC], dtype=np.float32 )
-            num_sus = fhandle['Robs'].shape[1]
-            units = range(unit_counter, unit_counter+num_sus)
-            robs_tmp[:, units] = np.array(fhandle['Robs'], dtype=np.float32)
-            dfs_tmp[:, units] = np.array(fhandle['datafilts'], dtype=np.float32)
-            if self.include_MUs:
-                num_mus = fhandle['RobsMU'].shape[1]
-                units = range(unit_counter+num_sus, unit_counter+num_sus+num_mus)
-                robs_tmp[:, units] = np.array(fhandle['RobsMU'], dtype=np.float32)
-                dfs_tmp[:, units] = np.array(fhandle['datafiltsMU'], dtype=np.float32)
-            
-            self.robs[inds,:] = deepcopy(robs_tmp)
-            self.dfs[inds,:] = deepcopy(dfs_tmp)
-
             t_counter += sz[0]
             unit_counter += self.num_units[ee]
 
@@ -321,198 +689,6 @@ class MultiClouds(SensoryBase):
             print( "Adjusting stimulus read from disk: mean | std = %0.3f | %0.3f"%(np.mean(self.stimLP), np.std(self.stimLP)))
     # END .preload_numpy()
 
-    def is_fixpoint_present( self, boxlim ):
-        """Return if any of fixation point is within the box given by top-left to bottom-right corner"""
-        if self.fix_location is None:
-            return False
-        fix_present = True
-        if self.stim_location.shape[1] == 1:
-            # if there is multiple windows, needs to be manual: so this is the automatic check:
-            for dd in range(2):
-                if (self.fix_location[dd]-boxlim[dd] <= -self.fix_size):
-                    fix_present = False
-                if (self.fix_location[dd]-boxlim[dd+2] > self.fix_size):
-                    fix_present = False
-        return fix_present
-    # END .is_fixpoint_present
-
-    def assemble_stimulus(self,
-        which_stim=None, stim_wrap=None, stim_crop=None, # conventional stim: ET=0, lam=1,
-        top_corner=None, L=None,  # position of stim
-        time_embed=0, num_lags=10,
-        luminance_only=False,
-        shifts=None, BUF=20, # shift buffer
-        shift_times=None, # So that can put partial-shifts over time range in stimulus
-        fixdot=0 ):
-        """This assembles a stimulus from the raw numpy-stored stimuli into self.stim
-        which_stim: determines what stimulus is assembled from 'ET'=0, 'lam'=1, None
-            If none, will need top_corner present: can specify with four numbers (top-left, bot-right)
-            or just top_corner and L
-        which is torch.tensor on default device
-        stim_wrap: only works if using 'which_stim', and will be [hwrap, vwrap]"""
-
-        # Delete existing stim and clear cache to prevent memory issues on GPU
-        if self.stim is not None:
-            del self.stim
-            self.stim = None
-            torch.cuda.empty_cache()
-        num_clr = self.dims[0]
-        need2crop = False
-
-        if which_stim is not None:
-            assert L is None, "ASSEMBLE_STIMULUS: cannot specify L if using which_stim (i.e. prepackaged stim)"
-            L = self.dims[1]
-            if not isinstance(which_stim, int):
-                if which_stim in ['ET', 'et', 'stimET']:
-                    which_stim=0
-                else:
-                    which_stim=1
-            if which_stim == 0:
-                print("Stim: using ET stimulus")
-                self.stim = torch.tensor( self.stimET, dtype=torch.float32, device=self.device )
-                self.stim_pos = self.stim_locationET[:,0]
-            else:
-                print("Stim: using laminar probe stimulus")
-                self.stim = torch.tensor( self.stimLP, dtype=torch.float32, device=self.device )
-                self.stim_pos = self.stim_location[:, 0]
-
-        else:
-            assert top_corner is not None, "Need top corner if which_stim unspecified"
-            # Assemble from combination of ET and laminer probe (NP) stimulus
-            if len(top_corner) == 4:
-                self.stim_pos = top_corner
-                #L = self.stim_pos[2]-self.stim_pos[0]
-                assert self.stim_pos[3]-self.stim_pos[1] == self.stim_pos[2]-self.stim_pos[0], "Stim must be square (for now)"
-            else:
-                if L is None:
-                    L = self.dims[1]
-                self.stim_pos = [top_corner[0], top_corner[1], top_corner[0]+L, top_corner[1]+L]
-            if shifts is not None:
-                need2crop = True
-                # Modify stim window by 20-per-side
-                self.stim_pos = [
-                    self.stim_pos[0]-BUF,
-                    self.stim_pos[1]-BUF,
-                    self.stim_pos[2]+BUF,
-                    self.stim_pos[3]+BUF]
-                print( "  Stim expansion for shift:", self.stim_pos)
-
-            L = self.stim_pos[2]-self.stim_pos[0]
-            assert self.stim_pos[3]-self.stim_pos[1] == L, "Stimulus not square"
-
-            newstim = np.zeros( [self.NT, num_clr, L, L] )
-            for ii in range(self.stim_location.shape[1]):
-                OVLP = self.rectangle_overlap_ranges(self.stim_pos, self.stim_location[:, ii])
-                if OVLP is not None:
-                    print("  Writing lam stim %d: overlap %d, %d"%(ii, len(OVLP['targetX']), len(OVLP['targetY'])))
-                    strip = deepcopy(newstim[:, :, OVLP['targetX'], :]) #np.zeros([self.NT, num_clr, len(OVLP['targetX']), L])
-                    strip[:, :, :, OVLP['targetY']] = deepcopy((self.stimLP[:, :, OVLP['readX'], :][:, :, :, OVLP['readY']]))
-                    newstim[:, :, OVLP['targetX'], :] = deepcopy(strip)
-                
-            if self.stimET is not None:
-                for ii in range(self.stim_locationET.shape[1]):
-                    OVLP = self.rectangle_overlap_ranges(self.stim_pos, self.stim_locationET[:,ii])
-                    if OVLP is not None:
-                        print("  Writing ETstim %d: overlap %d, %d"%(ii, len(OVLP['targetX']), len(OVLP['targetY'])))
-                        strip = deepcopy(newstim[:, :, OVLP['targetX'], :])
-                        strip[:, :, :, OVLP['targetY']] = deepcopy((self.stimET[:, :, OVLP['readX'], :][:, :, :, OVLP['readY']]))
-                        newstim[:, :, OVLP['targetX'], :] = deepcopy(strip) 
-
-            self.stim = torch.tensor( newstim, dtype=torch.float32, device=self.device )
-
-        #print('Stim shape', self.stim.shape)
-        # Note stim stored in numpy is being represented as full 3-d + 1 tensor (time, channels, NX, NY)
-        self.stim_dims = [self.dims[0], L, L, 1]
-        if luminance_only:
-            if self.dims[0] > 1:
-                # Resample first dimension of stimulus
-                print('  Shifting to luminance-only')
-                stim_tmp = deepcopy(self.stim.reshape([-1]+self.stim_dims[:3]))
-                del self.stim
-                torch.cuda.empty_cache()
-                self.stim = deepcopy(stim_tmp[:, [0], ...])
-                self.stim_dims[0] = 1            
-
-        # stim_wrap if 'which_stim' chosen
-        if stim_wrap is not None:
-            assert which_stim is not None, "Should only use stim_wrap on conventional (ET or LAM) stimulus."
-            hwrap = stim_wrap[0]
-            vwrap = stim_wrap[1]
-            self.wrap_stim( hwrap=-hwrap, vwrap=-vwrap )
-            self.stim_pos += [-hwrap, -vwrap, -hwrap, -vwrap]
-
-        # Insert fixation point
-        if (fixdot is not None) and self.is_fixpoint_present( self.stim_pos ):
-            fixranges = [None, None]
-            for dd in range(2):
-                fixranges[dd] = np.arange(
-                    np.maximum(self.fix_location[dd]-self.fix_size-self.stim_pos[dd], 0),
-                    np.minimum(self.fix_location[dd]+self.fix_size+1, self.stim_pos[dd+2])-self.stim_pos[dd] 
-                    ).astype(int)
-            # Write the correct value to stim
-            #print(fixranges)
-            assert fixdot == 0, "Haven't yet put in other fixdot settings than zero" 
-            #strip = deepcopy(self.stim[:, :, fixranges[0], :])
-            #strip[:, :, :, fixranges[1]] = 0
-            #self.stim[:, :, fixranges[0], :] = deepcopy(strip) 
-            print('  Adding fixation point')
-            for xx in fixranges[0]:
-                self.stim[:, :, xx, fixranges[1]] = 0
-
-        self.stim_shifts = shifts
-        if self.stim_shifts is not None:
-            # Would want to shift by input eye positions if input here
-            #print('eye-position shifting not implemented yet')
-            print('  Shifting stim...')
-            if shift_times is None:
-                self.stim = self.shift_stim( shifts, shift_times=shift_times, already_lagged=False )
-            else:
-                self.stim[shift_times, ...] = self.shift_stim( shifts, shift_times=shift_times, already_lagged=False )
-
-        # Reduce size back to original If expanded to handle shifts
-        if need2crop:
-            #assert self.stim_crop is None, "Cannot crop stim at same time as shifting"
-            self.crop_stim( [BUF, L-BUF-1, BUF, L-BUF-1] )  # move back to original size
-            self.stim_crop = None
-            L = L-2*BUF
-            self.stim_dims[1] = L
-            self.stim_dims[2] = L
-        else:
-            self.stim_crop = stim_crop 
-            if self.stim_crop is not None:
-                self.crop_stim()
-
-        if time_embed is not None:
-            self.time_embed = time_embed
-        if time_embed > 0:
-            #self.stim_dims[3] = num_lags  # this is set by time-embedding
-            if time_embed == 2:
-                self.stim = self.time_embedding( self.stim, nlags = num_lags )
-        # now stimulus is represented as full 4-d + 1 tensor (time, channels, NX, NY, num_lags)
-
-        self.num_lags = num_lags
-
-        # Flatten stim 
-        self.stim = self.stim.reshape([self.NT, -1])
-        print( "  Done" )
-    # END .assemble_stimulus()
-
-    def to_tensor(self, device):
-        if isinstance(self.robs, torch.Tensor):
-            # then already converted: just moving device
-            #self.stim = self.stim.to(device)
-            self.robs = self.robs.to(device)
-            self.dfs = self.dfs.to(device)
-            self.fix_n = self.fix_n.to(device)
-            if self.Xdrift is not None:
-                self.Xdrift = self.Xdrift.to(device)
-        else:
-            #self.stim = torch.tensor(self.stim, dtype=torch.float32, device=device)
-            self.robs = torch.tensor(self.robs, dtype=torch.float32, device=device)
-            self.dfs = torch.tensor(self.dfs, dtype=torch.float32, device=device)
-            self.fix_n = torch.tensor(self.fix_n, dtype=torch.int64, device=device)
-            if self.Xdrift is not None:
-                self.Xdrift = torch.tensor(self.Xdrift, dtype=torch.float32, device=device)
 
     def time_embedding( self, stim=None, nlags=None ):
         """Note this overloads SensoryBase because reshapes in full dimensions to handle folded_lags"""
@@ -882,7 +1058,7 @@ class MultiClouds(SensoryBase):
         return shstim
     # END .shift_stim_fixation
 
-    def create_valid_indices(self, post_sacc_gap=None):
+    def create_val_indices(self, post_sacc_gap=None):
         """
         This creates self.valid_inds vector that is used for __get_item__ 
         -- Will default to num_lags following each saccade beginning"""
@@ -890,19 +1066,22 @@ class MultiClouds(SensoryBase):
         if post_sacc_gap is None:
             post_sacc_gap = self.num_lags
 
-        # first, throw out all data where all data_filters are zero
         is_valid = np.zeros(self.NT, dtype=np.int64)
-        is_valid[torch.sum(self.dfs, axis=1) > 0] = 1
-        
-        # Now invalid post_sacc_gap following saccades
-        for nn in range(self.num_fixations):
-            print(self.sacc_inds[nn, :])
-            sts = self.sacc_inds[nn, :]
-            is_valid[range(sts[0], np.minimum(sts[0]+post_sacc_gap, self.NT))] = 0
-        
-        #self.valid_inds = list(np.where(is_valid > 0)[0])
+        for ff in range(self.Nexpts):
+            # assemble all current val_inds from each experiment
+            is_valid[self.file_tstart[ff]+self.file_info[ff]['valid_inds']] = 1
+
+            # Now invalid post_sacc_gap following saccades
+            if self.sacc_inds[ff] is not None:
+                for nn in range(len(self.sacc_inds[ff])):
+                    #print(self.sacc_inds[nn, :])
+                    sts = self.sacc_inds[nn, :]
+                    is_valid[self.file_tstart[ff]+np.arange(sts[0], np.minimum(sts[0]+post_sacc_gap, self.NT))] = 0
+
+        # But cancel if dfs says there are no valid cells
+        is_valid[torch.sum(self.dfs, axis=1) == 0] = 0
         self.valid_inds = np.where(is_valid > 0)[0]
-    # END .create_valid_indices
+    # END MultiCloud.create_val_indices()
 
     def crossval_setup(self, folds=5, random_gen=False, test_set=True, verbose=False):
         """This sets the cross-validation indices up We can add featuers here. Many ways to do this
