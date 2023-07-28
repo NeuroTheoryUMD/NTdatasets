@@ -416,8 +416,8 @@ class SensoryBase(Dataset):
                 offset = int(folds//2)
             else:
                 offset = which_fold%folds
-            val_items = np.arange(offset, num_items, folds, dtype='int32')
-            rem_items = np.delete(np.arange(num_items, dtype='int32'), val_items)
+            val_items = np.arange(offset, num_items, folds, dtype=np.int64)
+            rem_items = np.delete(np.arange(num_items, dtype=np.int64), val_items)
         return val_items, rem_items
 
     def speckledXV_setup( self, folds=5, random_gen=False ):
