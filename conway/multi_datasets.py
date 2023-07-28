@@ -345,12 +345,42 @@ class MultiClouds(SensoryBase):
                 assert np.max(clists[ff]) < (self.file_info[ff]['NSUs'] + self.file_info[ff]['NMUs']), "clists too large"
                 self.cranges[ff] = deepcopy(clists[ff])
             else:
-                self.cranges[ff] = deepcopy(np.arange(self.file_info[ff]['NC']))
+                if self.includeMUs:
+                    self.cranges[ff] = np.arange(self.file_info[ff]['NSUs']+self.file_info[ff]['NMUs'])
+                else:
+                    self.cranges[ff] = np.arange(self.file_info[ff]['NSUs'])
+
             self.fileNC[ff] = len(self.cranges[ff])
         self.NC = np.sum(self.fileNC)
 
         self.assemble_robs()
     # END MultiClouds.modify_included_cells()
+
+    def generate_array_cell_list(self, expt_n=0, which_array=0):
+        """Formula for generating cell list given channel maps and basic eligibility"""
+        #expt_val = np.where( np.sum( self.robs[:, np.arange(cstart, cstart+self.fileNC[expt_n])], axis=0 ) > 10)[0]
+
+        # Should only do this if have not already reduced channel list
+        NC = self.file_info[expt_n]['NSUs']
+        if self.includeMUs:
+            NC += self.file_info[expt_n]['NMUs']
+        assert len(self.cranges[expt_n]) == NC, "Can only generate cell_array if using currently using full cell_list"
+
+        if which_array in [1, 'u', 'U', 'utah']:
+            array_cells = np.where(self.file_info[expt_n]['channel_map'] >= 32+128)[0]
+        elif which_array in [0, 'l', 'L', 'lam', 'laminar']:
+            array_cells = np.where(self.file_info[expt_n]['channel_map'] < 32)[0]
+        else: # assume Nform
+            array_cells = np.where((self.file_info[expt_n]['channel_map'] >= 32) & (self.file_info[expt_n]['channel_map'] < 32+128))[0]
+
+        cstart = 0
+        for ff in range(expt_n):
+            cstart += self.fileNC[ff]
+        nspks = np.sum(self.robs.astype(np.float32)*self.dfs.astype(np.float32), axis=0)[cstart+array_cells]
+
+        val_array = array_cells[nspks > 20]
+        return val_array
+    # END MultiClouds.generate_array_cell_list()
 
     def assemble_robs(self):
         """Takes current information (robs and dfs) to make robs and dfs (full version)
