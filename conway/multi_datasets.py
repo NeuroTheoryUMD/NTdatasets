@@ -41,21 +41,15 @@ class MultiClouds(SensoryBase):
         drift_interval=None,
         trial_sample=True,
         luminance_only=True,
-        binocular = False, # whether to include separate filters for each eye
-        eye_config = 2,  # 0 = all, 1, -1, and 2 are options (2 = binocular)
+        binocular=False, # whether to include separate filters for each eye
+        eye_config=3,  # 0 = all, 1, 2, and 3 are options (3 = binocular)
+        eye_contiguous=True, # whether to only use eye_config data that is contiguous 
         cell_lists = None,
-        # device=torch.device('cpu'),
-        # Dataset-specitic inputs
-        # Stim setup -- if dont want to assemble stimulus: specify all things here for default options
-        #which_stim=None,  # 'et' or 0, or 1 for lam, but default assemble later
-        #stim_crop=None,  # should be list/array of 4 numbers representing inds of edges
-        #ignore_saccades=True,
-        #folded_lags=False, 
-        maxT = None):
+        device=torch.device('cpu')):
         """Constructor options"""
 
         super().__init__(
-            filenames=filenames, datadir=datadir, 
+            filenames=filenames, datadir=datadir, device=device,
             time_embed=0, num_lags=num_lags, include_MUs=include_MUs, 
             drift_interval=drift_interval, trial_sample=trial_sample)
 
@@ -73,6 +67,7 @@ class MultiClouds(SensoryBase):
 
         # Stim-specific
         self.eye_config = eye_config
+        self.eye_contiguous = eye_contiguous
         self.binocular = binocular
         self.luminance_only = luminance_only
         self.includeMUs = include_MUs
@@ -99,7 +94,6 @@ class MultiClouds(SensoryBase):
 
         # build index map -- exclude variables already set in sensory-base
         #self.num_blks = np.zeros(len(filenames), dtype=int)
-        self.data_threshold = 6  # how many valid time points required to include saccade?
         #self.file_index = [] # which file the block corresponds to
         #self.stim_dims = None
 
@@ -293,7 +287,13 @@ class MultiClouds(SensoryBase):
             block_inds = deepcopy(blk_inds)
         else:
             tmap = np.where(LRpresent == self.eye_config)[0]
- 
+            # Check for contiguous option (throw away disjoint eye config)
+            if self.eye_contiguous & (self.eye_config > 0):
+                tbreaks = np.where(np.diff(tmap) > 1)[0]
+                if len(tbreaks) > 0:
+                    print("  Disjoint data exists with this eye_config -- trunctating to first section.")
+                    tmap = tmap[range(tbreaks[0]+1)]
+
             # Remap valid_inds to smaller trage
             val_track = np.zeros(NT, dtype=np.int64)
             val_track[valid_inds] = 1
@@ -306,7 +306,7 @@ class MultiClouds(SensoryBase):
             tcount = 0
             block_inds = []
             for bb in range(NBLK):
-                if LRpresent[blk_inds[bb,0]] == self.eye_config:
+                if blk_inds[bb,0] in tmap:
                     bmap.append(bb)
                     NTblk = blk_inds[bb,1]-blk_inds[bb,0]
                     block_inds.append([tcount, tcount+NTblk])
