@@ -445,15 +445,15 @@ class MotionNeural(SensoryBase):
             stim = self.flash_stim.detach().numpy()
 
         if use_trial_type:
-            self.stim_dims = [2, 1, 1, 1]
             stim2 = np.concatenate( (deepcopy(stim), deepcopy(stim)), axis=1)
             for bb in range(len(self.block_inds)):
                 stim2[self.block_inds[bb], self.trial_type[bb]-1] = 0.0
                 # this will have stim present in 0 for fixation and 1 for free viewing
             self.stim = self.time_embedding( stim=stim2, nlags=num_lags)
+            self.stim_dims = [2, 1, 1, num_lags]
         else:
-            self.stim_dims = [1, 1, 1, 1]
             self.stim = self.time_embedding( stim=stim, nlags=num_lags)
+            self.stim_dims = [1, 1, 1, num_lags]
     # END MotionNeural.assemble_stimulus()
 
     def construct_Xadapt( self, tent_start=18+8, tent_spacing=20 ):
