@@ -1111,8 +1111,9 @@ class MultiClouds(SensoryBase):
             out = {'stim': self.stim[idx, :],
                 'robs': robs_tmp[idx, :],
                 'dfs': dfs_tmp[idx, :]}
-            if len(self.fix_n) > 0:
-                out['fix_n'] = self.fix_n[idx]
+            # FIXME: we are not using fix_n at the moment
+            # if len(self.fix_n) > 0:
+            #     out['fix_n'] = self.fix_n[idx]
 
         if self.speckled:
             if self.Mtrn_out is None:
