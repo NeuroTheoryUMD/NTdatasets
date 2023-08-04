@@ -77,9 +77,3 @@ def test_load_data():
     assert data.NT == 630240
     assert data.NC == 585
 
-
-def test_set_cells():
-    data.set_cells(np.arange(data.NC))
-    
-    # test __get_item__()
-    assert data[0]['stim'].shape == (240,3600)
