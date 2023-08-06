@@ -75,7 +75,8 @@ class MultiClouds(SensoryBase):
         self.output_separate_eye_stim = False
         self.expt_stims = [None]*self.Nexpts
         self.L = None
-
+        self.LMS = False
+        
         self.start_t = 0
         self.drift_interval = drift_interval
 
@@ -157,8 +158,6 @@ class MultiClouds(SensoryBase):
             # this will automatically assemble_robs at the end
         else:
             self.assemble_robs()
-
-        # Determine total experiment time and number of cells
  
         # Assemble current list of fixations
         self.sacc_inds = [None]*self.Nexpts
@@ -229,6 +228,7 @@ class MultiClouds(SensoryBase):
                     self.val_inds = np.concatenate( (self.val_inds, self.block_inds[bb]), axis=0 )
             for bb in self.train_blks:
                 self.train_inds = np.concatenate( (self.train_inds, self.block_inds[bb]), axis=0 )
+
     # END MultiClouds.__init__
 
     def read_file_info( self, file_n, filename ):
@@ -487,6 +487,7 @@ class MultiClouds(SensoryBase):
             time_embed=0, 
             shifts=None, BUF=20, # shift buffer
             stim_crop=None,
+            LMS=False,
             fixdot=0 ):
         """This assembles a stimulus from the raw numpy-stored stimuli into self.stim
         which_stim: determines what stimulus is assembled from 'ET'=0, 'lam'=1, None
@@ -499,6 +500,9 @@ class MultiClouds(SensoryBase):
         # Delete existing stim and clear cache to prevent memory issues on GPU
 
         need2crop = False
+        if LMS:
+            assert not self.luminance_only, "Cannot convert color spaces if luminance-only."
+        self.LMS = LMS
 
         if which_stim is not None:
             assert L is None, "CONSTRUCT_STIMULUS: cannot specify L if using which_stim (i.e. prepackaged stim)"
@@ -645,6 +649,13 @@ class MultiClouds(SensoryBase):
             if time_embed == 2:
                 newstim = self.time_embedding( newstim, nlags=self.num_lags )
         # now stimulus is represented as full 4-d + 1 tensor (time, channels, NX, NY, num_lags)
+
+        # Translate to cone-isolating stimmulus if DKL is false
+        if LMS:
+            # Make LMS conversion matrix
+            DKL2LMS = np.array([[0.7586, 0.6515, 0], [0.5536, -0.8328, 0], [0.5000, 0, 0.8660]], dtype=np.float32)
+            print( '  Converting to LMS space')
+            newstim = np.einsum( 'axcd,bx->abcd', newstim, DKL2LMS)
 
         # Flatten stim 
         self.expt_stims[expt_n] = deepcopy(newstim.reshape([self.fileNT[expt_n], -1]))
@@ -872,6 +883,9 @@ class MultiClouds(SensoryBase):
             print('Still need to implement avRs without preloading')
             return None
     # END .avrates()
+
+    def set_cells(self, **kwargs):
+        raise( Exception('set_cells does not work with MultiClouds.') )
 
     @staticmethod 
     def shift_stim( stim, shifts, input_dims=None, batch_size=5000):

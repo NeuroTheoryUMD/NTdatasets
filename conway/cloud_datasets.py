@@ -333,7 +333,6 @@ class ColorClouds(SensoryBase):
         self.val_inds = np.array(self.val_inds, dtype=np.int64)
         self.train_blks = trblks
         self.val_blks = vblks
-
     # END ColorClouds.__init__
 
     def preload_numpy(self):
@@ -464,6 +463,7 @@ class ColorClouds(SensoryBase):
         luminance_only=False,
         shifts=None, BUF=20, # shift buffer
         shift_times=None, # So that can put partial-shifts over time range in stimulus
+        LMS=False,  # if false, translate to cone-isolating stimulus 
         fixdot=0 ):
         """This assembles a stimulus from the raw numpy-stored stimuli into self.stim
         which_stim: determines what stimulus is assembled from 'ET'=0, 'lam'=1, None
@@ -478,6 +478,10 @@ class ColorClouds(SensoryBase):
             self.stim = None
             torch.cuda.empty_cache()
         num_clr = self.dims[0]
+        if LMS:
+            assert not self.luminance_only, "Cannot convert color spaces if luminance-only."
+        self.LMS = LMS
+
         need2crop = False
 
         if which_stim is not None:
@@ -521,7 +525,7 @@ class ColorClouds(SensoryBase):
             L = self.stim_pos[2]-self.stim_pos[0]
             assert self.stim_pos[3]-self.stim_pos[1] == L, "Stimulus not square"
 
-            newstim = np.zeros( [self.NT, num_clr, L, L] )
+            newstim = np.zeros( [self.NT, num_clr, L, L], dtype=np.float32 )
             for ii in range(self.stim_location.shape[1]):
                 OVLP = self.rectangle_overlap_ranges(self.stim_pos, self.stim_location[:, ii])
                 if OVLP is not None:
@@ -613,10 +617,19 @@ class ColorClouds(SensoryBase):
 
         self.num_lags = num_lags
 
+        # Translate to cone-isolating stimmulus if DKL is false
+        if LMS:
+            # Make cone-isolating stimulus conversion matrix
+            #DKL2CIS = torch.tensor([[0.0401,.522,0], [.0351,-0.4635,0], [0.0145,0,.985]], dtype=torch.float32)
+            #DKL2LMS = torch.tensor([[0.9737, 0.0799, -0.0836], [1.0155, -0.1210, -0.1135], [1.0890, -0.0138, 0.9183]], dtype=torch.float32)
+            DKL2LMS = torch.tensor([[0.7586, 0.6515, 0], [0.5536, -0.8328, 0], [0.5000, 0, 0.8660]], dtype=torch.float32)
+            print( '  Converting to LMS space')
+            self.stim = torch.einsum( 'axcd,bx->abcd', self.stim, DKL2LMS)
+
         # Flatten stim 
         self.stim = self.stim.reshape([self.NT, -1])
         print( "  Done" )
-    # END .assemble_stimulus()
+    # END ColorClouds.assemble_stimulus()
 
     def to_tensor(self, device):
         if isinstance(self.robs, torch.Tensor):
