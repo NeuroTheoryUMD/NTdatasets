@@ -1122,11 +1122,12 @@ class MultiClouds(SensoryBase):
                 robs_tmp =  self.robs[:, self.cells_out]
                 dfs_tmp =  self.dfs[:, self.cells_out]
 
-            out = {'stim': self.stim[idx, :],
-                'robs': robs_tmp[idx, :],
-                'dfs': dfs_tmp[idx, :]}
-            if len(self.fix_n) > 0:
-                out['fix_n'] = self.fix_n[idx]
+            out = {'stim': torch.tensor(self.stim[idx, :], dtype=torch.float32, device=self.device)/128,
+                   'robs': torch.tensor(robs_tmp[idx, :], dtype=torch.float32, device=self.device),
+                   'dfs': torch.tensor(dfs_tmp[idx, :], dtype=torch.float32, device=self.device)}
+            # FIXME: we are not using fix_n at the moment
+            # if len(self.fix_n) > 0:
+            #     out['fix_n'] = self.fix_n[idx]
 
         if self.speckled:
             if self.Mtrn_out is None:

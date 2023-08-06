@@ -500,7 +500,7 @@ class SensoryBase(Dataset):
     def is_int( val ):
         """returns Boolean as to whether val is one of many types of integers"""
         if isinstance(val, int) or \
-            isinstance(val, np.int) or isinstance(val, np.int32) or isinstance(val, np.int64) or \
+            isinstance(val, np.int32) or isinstance(val, np.int64) or \
             (isinstance(val, np.ndarray) and (len(val.shape) == 0)):
             return True
         else:
