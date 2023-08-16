@@ -369,6 +369,7 @@ class MotionNeural(SensoryBase):
         self.NT = len(self.robs)
         self.dfs = torch.tensor( matdat['rf_criteria'], dtype=torch.float32)
         self.NC = self.robs.shape[1]
+        self.ACinput = None  # autoencoder input
 
         # Use stim onsets for stim timing (starts with black)
         self.stimB = matdat['stimB'][:, 0].astype(np.float32)
@@ -532,6 +533,8 @@ class MotionNeural(SensoryBase):
         out['Xdrift'] = self.Xdrift[idx, :]
         if self.Xadapt is not None:
             out['Xadapt'] = self.Xadapt[idx, :]
+        if self.ACinput is not None:
+            out['ACinput'] = self.ACinput[idx, :]
 
         if len(self.covariates) > 0:
             self.append_covariates( out, idx)
