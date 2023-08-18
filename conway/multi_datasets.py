@@ -884,8 +884,9 @@ class MultiClouds(SensoryBase):
             return None
     # END .avrates()
 
-    def set_cells(self, **kwargs):
-        raise( Exception('set_cells does not work with MultiClouds.') )
+    #def set_cells(self, **kwargs):
+    #    raise( Exception('set_cells does not work with MultiClouds.') )
+    # USE SENSORY-BASE -- should be set up now....
 
     @staticmethod 
     def shift_stim( stim, shifts, input_dims=None, batch_size=5000):
