@@ -70,7 +70,12 @@ class binocular_single(SensoryBase):
 
         # used_inds and XV
         used_inds = np.add(np.transpose(Bmatdat['used_inds'])[0,:], -1) # note adjustment for python v matlab indexing
-        self.Ui_analog = Bmatdat['Ui_analog'][:,0]  # these are automaticall in register
+        # implement within datafilters:
+        df_mult = np.zeros([self.NT,1], dtype=np.float32)
+        df_mult[used_inds] = 1.0
+        self.dfs *= df_mult
+
+        self.Ui_analog = Bmatdat['Ui_analog'][:,0]  # these are automatically in register
         self.XiA_analog = Bmatdat['XiA_analog'][:,0]
         self.XiB_analog = Bmatdat['XiB_analog'][:,0]
         # two cross-validation datasets -- for now combine

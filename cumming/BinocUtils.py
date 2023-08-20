@@ -5,23 +5,57 @@ import NDNT.NDNT as NDN
 from time import time
 from copy import deepcopy
 
-def explainable_variance_binocular( Einfo, resp, indxs, cell_num=None ):
-    """This is the explainable variance calculation, and is binocular-specific because of the data structures
-    in Einfo only. Note: will return total variance (and a warning) if repeats not present in the dataset."""
 
-    if cell_num is None:
-        print( 'Warning: cell-specific repeats not given: using cc=0.')
-        cell_num = 1
+def varDF( s, df=None, mean_adj=True ):
+    """Calculates variance over valid data. 
+    mean_adj means true variance, but take away and becomes average squared deviation"""
+
+    s = s.squeeze()
+    if df is None:
+        df = np.ones(s.shape)
+    df = df.squeeze()
+    nrm = np.sum(df)
+    assert nrm > 0, "df: no valid data"
+
+    if mean_adj:
+        sbar = np.sum(df*s)/nrm
     else:
-        if cell_num == 0:
-            print('Warning: must use matlab-style cell numbers (starting at 1)')
+        sbar = 0
+    return np.sum(np.square(s-sbar)*df)/nrm
+     
 
-    if Einfo.rep_inds is None:
-        print( 'No repeats in this dataset.')
-        return np.var(resp[indxs]), np.var(resp[indxs])
+def explainable_variance( Edata, cell_n, fr1or3=None, inds=None, suppress_warnings=False ):
+    """Explainable variance calculation: binocular-specific because of the data structures
+    Inputs:
+        Edata: binocular dataset (one experiment with a certain number of cells recorded)
+        cell_n: cell number (in python numbering, i.e. starting with 0)
+        inds (def: None): indices to calculate variances over, if None will use all inds
+            generally will pass in the fr3 indices, for example
+    Outputs:
+        totvar: literally the variance of the binned spike counts (resp) -- will be dom by spike stoch.
+        explvar: explainable variance: repeatable variance (small fraction of totvar)
+
+    Note: will return total variance (and a warning) if repeats not present in the dataset."""
+
+    assert cell_n < Edata.NC, "cell_n is too large for this experiment (num cells = %d)"%Edata.NC
+
+    resp = Edata.robs[:, cell_n].detach().numpy()
+    
+    if inds is None:
+        inds = np.where(Edata.dfs[:, cell_n] > 0)[0]
+    else:
+        inds = np.intersect1d( inds, np.where(Edata.dfs[:, cell_n] > 0)[0] )
+
+    if (fr1or3 == 3) or (fr1or3 == 1):
+        inds = np.intersect1d(inds, np.where(Edata.frs == fr1or3)[0])
+
+    if Edata.rep_inds is None:
+        if ~suppress_warnings:
+            print( 'No repeats in this dataset -- using total variance.')
+        return np.var(resp[inds]), np.var(resp[inds])
             
-    rep1inds = np.intersect1d(indxs, Einfo.rep_inds[cell_num-1][:,0])
-    rep2inds = np.intersect1d(indxs, Einfo.rep_inds[cell_num-1][:,1])
+    rep1inds = np.intersect1d(inds, Edata.rep_inds[cell_n][:,0])
+    rep2inds = np.intersect1d(inds, Edata.rep_inds[cell_n][:,1])
     allreps = np.concatenate((rep1inds, rep2inds), axis=0)
 
     totvar = np.var(resp[allreps])
@@ -30,44 +64,64 @@ def explainable_variance_binocular( Einfo, resp, indxs, cell_num=None ):
     return explvar, totvar
 
 
-def predictive_power_binocular( Robs, pred, indxs=None, expl_var=None, Einfo=None, cell_num=1, suppress_warnings=False ):
-    """Use Einfo to modify indices used to rep_inds (and can fill in expl_var) -- otherwise not used for anything
-    Robs sometimes is already indexed nby indxs, so check that it needs to be indexed. Will be assuming that
-    pred is full range -- otherwise no need to pass indx in."""
-    
-    if indxs is None:
-        indxs = np.arange(len(Robs))
-    mod_indxs = deepcopy(indxs)
-    if Einfo is not None:
-        if Einfo.rep_inds is not None:
-            rep1inds = np.intersect1d(indxs, Einfo.rep_inds[cell_num-1][:,0])
-            rep2inds = np.intersect1d(indxs, Einfo.rep_inds[cell_num-1][:,1])
-            allreps = np.concatenate((rep1inds, rep2inds), axis=0)
-            mod_indxs = np.intersect1d( mod_indxs, allreps )
-        if expl_var is None:
-            expl_var,_ = explainable_variance_binocular( Einfo, Robs.numpy(), indxs, cell_num )
-            
-    
-    r1 = deepcopy(Robs[mod_indxs].numpy())
-    r2 = pred[mod_indxs].detach().numpy()
+def predictive_power( pred, Edata, cell_n, inds=None, suppress_warnings=False ):
+    """Predictive power calculation (R2 adjusted by dividing by explainable (rather than total) variance
+    (binocular-specific because of the data structures)
+    Inputs:
+        pred: model prediction: must have same size as robs (unindexed)
+        Edata: binocular dataset (one experiment with a certain number of cells recorded)
+        cell_n: cell number (in python numbering, i.e. starting with 0)
+        inds (def: None): indices to calculate variances over, if None will use all inds
+            BUT it should pass in XVinds generally, and for example could also focus on fr3
+        suppress_warnings (def False): self-explanatory
+    Outputs: predictive power of cell """
+
+    assert cell_n < Edata.NC, "cell_n is too large for this experiment (num cells = %d)"%Edata.NC
+    pred=pred.squeeze()
+
+    if not type(pred) == np.ndarray:
+        pred = pred.detach().numpy()
+
+    if inds is None:
+        inds = np.where(Edata.dfs[:, cell_n] > 0)[0]
+    else:
+        inds = np.intersect1d( inds, np.where(Edata.dfs[:, cell_n] > 0)[0] )
+
+    Robs = Edata.robs[:, cell_n].detach().numpy()
+    mod_indxs = deepcopy(inds)
+    if Edata.rep_inds is not None:
+        rep1inds = np.intersect1d(inds, Edata.rep_inds[cell_n][:,0])
+        rep2inds = np.intersect1d(inds, Edata.rep_inds[cell_n][:,1])
+        allreps = np.concatenate((rep1inds, rep2inds), axis=0)
+        mod_indxs = np.intersect1d( mod_indxs, allreps )
+        r1a = Robs[rep1inds]
+        r1b = Robs[rep2inds]
+        r2 = pred[rep1inds]  # pred will be the same on both
+    else:
+        r1a = Robs[mod_indxs]
+        r1b = r1a
+        r2 = pred[mod_indxs]
 
     # Now assuming that r (Robs) is length of indxs, and pred is full res
-    if expl_var is None:
-        # this means repeat info not passed in, so just use total variance
-        if ~suppress_warnings:
-            print( '  Using total variance for normalization')
-        expl_var = np.var(Robs)
-    
-    explained_power = np.var(r1)-np.mean(np.square(r1-r2))
-    
+    expl_var,_ = explainable_variance( Edata, cell_n, inds=mod_indxs, suppress_warnings=suppress_warnings )
+
+    # explained_power = np.var(r1)-np.mean(np.square(r1-r2))  # WOW I THINK THIS IS WRONG -- WAS ORIGINAL FORMULA
+    explained_power = expl_var -np.mean(np.multiply(r1a-r2, r1b-r2))
+
     # calculate other way
     #crosscorr = np.mean(np.multiply(r1-np.mean(r1), r2-np.mean(r2)))
     #print( (crosscorr**2/expl_var/np.var(r2)) )
+
     return explained_power/expl_var
 
 
 def disparity_matrix( dispt, corrt=None ):
-
+    """Create one-hot representation of disparities: NT x 2*ND+2 (ND = num disparities)
+    -- Columns (0,ND-1):  correlated
+    -- Columns (ND, 2*ND-1): anticorrelated
+    -- Column -2: uncorrelated
+    -- Column -1: blank 
+    """
     dlist_raw = np.unique(dispt) 
     if np.max(abs(dlist_raw)) > 100:
         # last two colums will be uncorrelated (-1005) and blank (-1009)
@@ -96,184 +150,279 @@ def disparity_matrix( dispt, corrt=None ):
 
     return dmat
 
+
+def disparity_tuning( data, r, cell_n=None, num_dlags=8, fr1or3=3, to_plot=False ):
+    """Compute disparity tuning (disparity vs time) -- returned in dictionary object
+    -> include cell_n to use data_filters from the actual cell
+    """
+    import torch
+
+    dmat = disparity_matrix( data.dispt, data.corrt)
+    ND = (dmat.shape[1]-2) // 2
+
+    # Weight all by their frequency of occurance    
+    if (fr1or3 == 3) or (fr1or3 == 1):
+        inds = np.where(data.frs == fr1or3)[0]
+    else:
+        inds = np.where(data.frs > 0)[0]
+
+    if isinstance(r, torch.Tensor):
+        r = r.cpu().detach().numpy()
+    r = r.squeeze()
+    
+    if cell_n is not None:
+        resp = np.multiply( deepcopy(r), data.dfs[:, cell_n].detach().numpy())[inds]
+    else:
+        resp = deepcopy(r[inds])
+
+    resp = resp[:, None]
+    dmatN = dmat / np.mean(dmat[inds, :], axis=0)  # will be stim rate
+
+    # if every stim resulted in 1 spk, the would be 1 as is
+    #nrms = np.mean(dmat[used_inds[to_use],:], axis=0) # number of stimuli of each type
+    Xmat = utils.create_time_embedding( dmatN[:, range(ND*2)], num_dlags)[inds, :]
+    # uncorrelated response
+    Umat = utils.create_time_embedding( dmatN[:, [-2]], num_dlags)[inds, :]
+                          
+    #Nspks = np.sum(resp[to_use, :], axis=0)
+    Nspks = np.sum(resp, axis=0)  # this will end up being number of spikes associated with each stim 
+    # at different lags, divided by number of time points used. (i.e. prob of spike per bin)
+
+    Dsta = np.reshape( Xmat.T@resp, [2*ND, num_dlags] ) / Nspks
+    Usta = (Umat.T@resp)[:,0] / Nspks
+    
+    # Rudimentary analysis
+    best_lag = np.argmax(np.max(Dsta[range(ND),:], axis=0))
+    Dtun = np.reshape(Dsta[:, best_lag], [2, ND]).T
+    uncor_resp = Usta[best_lag]
+    
+    Dinfo = {'Dsta':Dsta, 'Dtun': Dtun, 'uncor_resp': uncor_resp, 
+            'best_lag': best_lag, 'uncor_sta': Usta, 'disp_list': data.disp_list[2:]}
+
+    if to_plot:
+        import matplotlib.pyplot as plt
+        utils.subplot_setup(1,2, fig_width=10, row_height=2.8)
+        plt.subplot(1,2,1)
+        utils.imagesc(Dsta-uncor_resp, cmap='bwr')
+        plt.plot([ND-0.5,ND-0.5], [-0.5, num_dlags-0.5], 'k')
+        plt.plot([-0.5, 2*ND-0.5], [best_lag, best_lag], 'k--')
+        plt.subplot(1,2,2)
+        plt.plot(Dtun)
+        plt.plot(-Dtun[:,1]+2*uncor_resp,'m--')
+
+        plt.plot([0, ND-1], [uncor_resp, uncor_resp], 'k')
+        plt.xlim([0, ND-1])
+        plt.show()
+        
+    return Dinfo
+
 ## Not  working yet ##
 
 def disparity_predictions( 
-    Einfo, resp, 
-    indxs=None, num_dlags=8, fr1or3=None, spiking=True, rectified=True, opt_params=None ):
+    data, resp=None, cell_n=None, 
+    fr1or3=None, indxs=None, 
+    num_dlags=8,  spiking=True, rectified=True ):
     """Calculates a prediction of the disparity (and timing) signals that can be inferred from the response
     by the disparity input alone. This puts a lower bound on how much disparity is driving the response, although
-    practically speaking will generate the same disparity tuning curves.
+    practically speaking it generates the same disparity tuning curves for neurons.
     
-    Usage: Dpred, Tpred = disparity_predictions( Einfo, resp, indxs, num_dlags=8, spiking=True, rectified=True, opt_params=None )
-
-    Inputs: Indices gives data range to fit to.
-    Outputs: Dpred and Tpred will be length of entire experiment -- not just indxs
+    Inputs:
+        data: dataset (NTdatasets.binocular.single)
+        resp: either Robs or predicted response across whole dataset -- leave blank if want neurons Robs
+        indxs: subset of data -- probably will not use given dfs and fr1or3
+        num_dlags: how many lags to compute disparity/timing predictions using (default 8 is sufficient)
+        fr1or3: whether to use fr1==1, fr3==3, or both (leave as None) to calculate disparity. Should choose 1 or 3
+        spiking: whether to use Poisson loss function (spiking data) or Gaussian (continuous prediction): default True
+        rectified: whether to rectify the predictions using softplus (since predicting spikes, generally)
+    Outputs: 
+        Dpred: full disparity+timing prediction
+        Tpred: prediction using just frame refresh and blanks
+        Note that both will predict over the whole dataset, even if only used 1 part to fit
     """
 
-    # Process disparity into disparty and timing design matrix
-    dmat = disparity_matrix( Einfo.dispt, Einfo.corrt )
-    ND2 = dmat.shape[1]
+    assert cell_n is not None, "Need to specify which neuron modeling for valid comparisons"
+
+    import torch
+    from NTdatasets.generic import GenericDataset
+    from NDNT.modules.layers import NDNLayer
+
+    # use Robs if response is blank
+    if resp is None:
+        resp = data.robs[:, cell_n]
+    # Make sure response is formatted correctly
+    if not isinstance( resp, torch.Tensor):
+        resp = torch.tensor( resp, dtype=torch.float32 )
+    if len(resp.shape) == 1:
+        resp = resp[:, None]
+
     if indxs is None:
-        indxs = range(dmat.shape[0])
-        
-    #Fb added: new way to fit model
-    # everything but blank
-    #Xd = NDNutils.create_time_embedding( dmat[:, :-1], [num_dlags, ND2-1, 1])
-    data_xd={"stim":dmat[:,:-1]}
-    data_xd.stim_dims = [num_dlags, ND2-1, 1]
-    
-    # blank
-    #Xb = NDNutils.create_time_embedding( dmat[:, -1], [num_dlags, 1, 1])
-    data_xb.stim = dmat[:, -1]
-    data_xb.stim_dims = [num_dlags, 1, 1]
-    
-    # timing
-    switches = np.expand_dims(np.concatenate( (np.sum(abs(np.diff(dmat, axis=0)),axis=1), [0]), axis=0), axis=1)
-    #Xs = NDNutils.create_time_embedding( switches, [num_dlags, 1, 1])
-    data_xs.stim = switches
-    
-    #tpar = NDNutils.ffnetwork_params( 
-    #    xstim_n=[0], input_dims=[1,1,1, num_dlags], layer_sizes=[1], verbose=False,
-    #    layer_types=['normal'], act_funcs=['lin'], reg_list={'d2t':[None],'l1':[None ]})
-    tpar = NDNLayer.layer_dict( 
-    input_dims=[num_dlags, 1, 1], num_filters=1, bias=True, initialize_center = True, NLtype='lin')
-    
-    bpar = deepcopy(tpar)
-    bpar['xstim_n'] = [1]
-    dpar = NDNutils.ffnetwork_params( 
-        xstim_n=[2], input_dims=[1,ND2-1,1, num_dlags], layer_sizes=[1], verbose=False,
-        layer_types=['normal'], act_funcs=['lin'], reg_list={'d2xt':[None],'l1':[None]})
-    if rectified:
-        comb_parT = NDNutils.ffnetwork_params( 
-            xstim_n=None, ffnet_n=[0,1], layer_sizes=[1], verbose=False,
-            layer_types=['normal'], act_funcs=['softplus'])
-    else:
-        comb_parT = NDNutils.ffnetwork_params( 
-            xstim_n=None, ffnet_n=[0,1], layer_sizes=[1], verbose=False,
-            layer_types=['normal'], act_funcs=['lin'])
-
-    comb_par = deepcopy(comb_parT)
-    comb_par['ffnet_n'] = [0,1,2]
-
-    if spiking:
-        nd = 'poisson'
-    else:
-        nd = 'gaussian'
-        
-    Tglm = NDN.NDN( [tpar, bpar, comb_parT], noise_dist=nd, tf_seed = 5)
-    DTglm = NDN.NDN( [tpar, bpar, dpar, comb_par], noise_dist=nd, tf_seed = 5)
-    v2fT = Tglm.fit_variables( layers_to_skip=[2], fit_biases=False)
-    v2fT[2][0]['fit_biases'] = True
-    v2f = DTglm.fit_variables( layers_to_skip=[3], fit_biases=False)
-    v2f[3][0]['fit_biases'] = True
-
+        indxs = range(resp.shape[0])
     if (fr1or3 == 3) or (fr1or3 == 1):
-        mod_indxs = np.intersect1d(indxs, np.where(Einfo.frs == fr1or3)[0])
-        #frs_valid = Einfo['frs'] == fr1or3
+        mod_indxs = np.intersect1d(indxs, np.where(data.frs == fr1or3)[0])
     else:
         mod_indxs = indxs
-    
-    _= Tglm.train(
-        input_data=[Xs[mod_indxs,:], Xb[mod_indxs,:]], output_data=resp[mod_indxs], # fit_variables=v2fT,
-        learning_alg='lbfgs', opt_params=opt_params)
-    _= DTglm.train(
-        input_data=[Xs[mod_indxs,:], Xb[mod_indxs,:], Xd[mod_indxs,:]], # fit_variables=v2f, 
-        output_data=resp[mod_indxs], learning_alg='lbfgs', opt_params=opt_params)
-    
-    # make predictions of each
-    predT = Tglm.generate_prediction( input_data=[Xs, Xb] )
-    predD = DTglm.generate_prediction( input_data=[Xs, Xb, Xd] )
-    
-    return predD, predT
 
-def binocular_model_performance( Einfo=None, Robs=None, Rpred=None, indxs=None, cell_num=1, opt_params=None ):
+    # Process disparity into disparty and timing design matrix
+    dmat = disparity_matrix( data.dispt, data.corrt )  # all information about disparity
+    
+    # This keeps track of changes in disparity (often every 3)
+    switches = np.expand_dims(np.concatenate( (np.sum(abs(np.diff(dmat, axis=0)),axis=1), [0]), axis=0), axis=1)/2
+    # Switches are not relevant during FR1 -- would at best be constant offset
+    switches[np.where(data.frs == 1)[0]] = 0.0
+    
+    # Append switches to full disparity-oracle dataset
+    dmat = np.concatenate( (dmat, switches), axis=1 )
+    ND2 = dmat.shape[1]  # this includes uncorrelated (second to last) and blanks (last column
+
+    blanks = dmat[:, -1][:, None]
+    tmat = np.concatenate( (blanks, switches), axis=1 )
+
+    # Make models that use disparity to predict response, and timing alone
+    Ddata = GenericDataset( {
+        'stim': torch.tensor(utils.create_time_embedding( dmat, num_dlags), dtype=torch.float32),
+        'timing': torch.tensor(utils.create_time_embedding( tmat, num_dlags), dtype=torch.float32),
+        'robs': resp,
+        'dfs': data.dfs[:, cell_n][:, None]})
+
+    lbfgs_pars = utils.create_optimizer_params(
+        optimizer_type='lbfgs',
+        tolerance_change=1e-8, tolerance_grad=1e-8,
+        history_size=100, batch_size=1000, max_epochs=3, max_iter=500)
+ 
+    if rectified:
+        nltype = 'softplus'
+    else:
+        nltype = 'lin'
+    if spiking:
+        losstype = 'poisson'
+    else:
+        losstype = 'gaussian'
+        
+    dpred_layer = NDNLayer.layer_dict(
+        input_dims=[1,ND2,1,num_dlags], num_filters=1, bias=True, NLtype=nltype)
+
+    tpred_layer = NDNLayer.layer_dict(
+        input_dims=[2,1,1,num_dlags], num_filters=1, bias=True, NLtype=nltype)
+
+    dpredmod = NDN.NDN( layer_list=[dpred_layer], loss_type=losstype )
+    tpredmod = NDN.NDN( layer_list=[tpred_layer], loss_type=losstype )
+    tpredmod.networks[0].xstim_n = 'timing'
+
+    dpredmod.fit( Ddata, force_dict_training=True, train_inds=mod_indxs, val_inds=mod_indxs, 
+                **lbfgs_pars, verbose=0, version=1)
+
+    tpredmod.fit( Ddata, force_dict_training=True, train_inds=mod_indxs, val_inds=mod_indxs, 
+                **lbfgs_pars, verbose=0, version=1)
+
+    tpred = tpredmod(Ddata[:]).detach().numpy()
+    dpred = dpredmod(Ddata[:]).detach().numpy()
+
+    return dpred, tpred
+
+
+def binocular_model_performance( data=None, cell_n=None, Rpred=None ):
     """Current best-practices for generating prediction quality of neuron and binocular tuning. Currently we
     are not worried about using cross-validation indices only (as they are based on much less data and tend to
     otherwise be in agreement with full measures, but this option could be added in later versions."""
 
-    assert Einfo is not None, 'Need to include Einfo'
-    assert indxs is not None, 'Need to include valid indxs'
-    if opt_params is None:
-        opt_params = NDN.NDN.optimizer_defaults(opt_params={'use_gpu': True, 'display': True}, learning_alg='lbfgs')
-    
-    if len(Robs.shape) == 1:
-        Robs = np.expand_dims(Robs, axis=1)
+    assert data is not None, 'Need to include dataset'
+    assert cell_n is not None, 'Must specify cell to check'
+
+    #import torch
+    #if not isinstance( Rpred, torch.Tensor):
+    #    Rpred = torch.tensor( Rpred, dtype=torch.float32 )
     if len(Rpred.shape) == 1:
-        Rpred = np.expand_dims(Rpred, axis=1)
-
-    indxs3 = np.intersect1d(indxs, np.where(Einfo.frs == 3)[0])
-    indxs1 = np.intersect1d(indxs, np.where(Einfo.frs == 1)[0])
+        Rpred = Rpred[:, None]
     
+    ## GENERAL COMPUTATIONS on data (cell-specific but not yet model-specific, using as much data as can)
     # make disparity predictions for all conditions
-    # -- actually checked and best to fit both data simultaneously. So: do all possibilities
-    dobs0, tobs0 = disparity_predictions( Einfo, Robs, indxs, spiking=True, opt_params=opt_params )
-    dmod0, tmod0 = disparity_predictions( Einfo, Rpred, indxs, spiking=False, opt_params=opt_params )
+    dobs0, tobs0 = disparity_predictions( data, cell_n=cell_n, spiking=True, rectified=True )
+    dmod0, tmod0 = disparity_predictions( data, resp=Rpred, cell_n=cell_n, spiking=True, rectified=True )
 
-    dobs1, tobs1 = disparity_predictions(Einfo, Robs, indxs1, spiking=True, opt_params=opt_params )
-    dmod1, tmod1 = disparity_predictions( Einfo, Rpred, indxs1, spiking=False, opt_params=opt_params )
+    dobs3, tobs3 = disparity_predictions( data, cell_n=cell_n, fr1or3=3, spiking=True, rectified=True )
+    dmod3, tmod3 = disparity_predictions( data, resp=Rpred, cell_n=cell_n, fr1or3=3, spiking=True, rectified=True )
 
-    dobs3, tobs3 = disparity_predictions(Einfo, Robs, indxs3, spiking=True, opt_params=opt_params )
-    dmod3, tmod3 = disparity_predictions( Einfo, Rpred, indxs3, spiking=False, opt_params=opt_params )
+    dobs1, tobs1 = disparity_predictions( data, cell_n=cell_n, fr1or3=1, spiking=True, rectified=True )
+    dmod1, tmod1 = disparity_predictions( data, resp=Rpred, cell_n=cell_n, fr1or3=1, spiking=True, rectified=True )
 
-    # Calculate overall
-    ev, tv = explainable_variance_binocular( Einfo, Robs, indxs=indxs, cell_num=cell_num)
-    ev3, tv3 = explainable_variance_binocular( Einfo, Robs, indxs=indxs3, cell_num=cell_num)
-    ev1, tv1 = explainable_variance_binocular( Einfo, Robs, indxs=indxs1, cell_num=cell_num) 
+    # This necessarily takes data-filters into account, but not cross-validation inds
+    ev, tv = explainable_variance( data, cell_n=cell_n )
+    ev3, tv3 = explainable_variance( data, cell_n=cell_n, fr1or3=3 )
+    ev1, tv1 = explainable_variance( data, cell_n=cell_n, fr1or3=1 )
     
     if ev == tv:
         ev_valid = False
     else:
         ev_valid = True
-    dv_obs = np.var(dobs0[indxs]-tobs0[indxs])
-    dv_obs3 = np.var(dobs0[indxs3]-tobs0[indxs3])
-    dv_obs1 = np.var(dobs0[indxs1]-tobs0[indxs1])
-    dv_pred = np.var(dmod0[indxs]-tmod0[indxs])
-    dv_pred3a = np.var(dmod3[indxs3]-tmod3[indxs3])
-    #dv_pred3b = np.var(dmod3[indxs3]-tmod3[indxs3])
-    dv_pred1a = np.var(dmod1[indxs1]-tmod1[indxs1])
-    #dv_pred1b = np.var(dmod1[indxs1]-tmod1[indxs1])
+
+    print( "  Overall explainable variance fraction: %0.3f"%(ev/tv) )
+
+    #### Model and data properties (not performance yet)
+    indxs3 = np.where(data.frs == 3)[0]
+    indxs1 = np.where(data.frs == 1)[0]
+    df = data.dfs[:, cell_n].detach().numpy()
+
+    # Have to use same (df) inds as overall explainable variance to make fractions directly valid
+    dv_obs = varDF(dobs0-tobs0, df=df)
+    dv_obs3 = varDF(dobs0[indxs3]-tobs0[indxs3], df=df[indxs3])
+    dv_obs1 = varDF(dobs0[indxs1]-tobs0[indxs1], df=df[indxs1])
+
+    dv_pred = varDF(dmod0-tmod0, df=df)
+    dv_pred3 = varDF(dmod3[indxs3]-tmod3[indxs3], df=df[indxs3])
+    dv_pred1 = varDF(dmod1[indxs1]-tmod1[indxs1], df=df[indxs1])
     
-    print( "\nOverall explainable variance fraction: %0.2f"%(ev/tv) )
-    print( "Obs disparity variance fraction: %0.2f (FR3: %0.2f)"%(dv_obs/ev, dv_obs3/ev3) )
+    print( "  Obs disparity variance fraction (DVF): %0.3f (FR3: %0.3f)"%(dv_obs/ev, dv_obs3/ev3) )
     vars_obs = [tv, ev, dv_obs, ev-dv_obs ]  # total, explainable, disp_var, pattern_var
     vars_obs_FR3 = [tv3, ev3, dv_obs3, ev3-dv_obs3 ]  # total, explainable, disp_var, pattern_var
     DVfrac_obs = [dv_obs/ev, dv_obs3/ev3, dv_obs1/ev1 ]
 
-    vars_mod = [np.var(Rpred[indxs]), dv_pred, np.var(Rpred[indxs])-dv_pred]
-    DVfrac_mod = [dv_pred/np.var(Rpred[indxs]), 
-                  dv_pred3a/np.var(Rpred[indxs3]), 
-                  dv_pred1a/np.var(Rpred[indxs1])]
+    # use numpy version of Rpred from here on
+    Rpred = Rpred.detach().numpy()
+    var_pred = varDF(Rpred, df=df)
+    vars_mod = [varDF(Rpred, df=df), dv_pred, var_pred-dv_pred]
+    DVfrac_mod = [dv_pred/var_pred, 
+                  dv_pred3/varDF(Rpred[indxs3], df=df[indxs3]), 
+                  dv_pred1/varDF(Rpred[indxs1], df=df[indxs1])]
+
+
+    ## Model-based performance measures - need cross-validation indices only
+    indxs3xv = np.intersect1d( data.val_inds, np.where(data.frs == 3)[0] )
+    indxs1xv = np.intersect1d( data.val_inds, np.where(data.frs == 1)[0] )
+
     #DVfrac_mod_alt = [dv_mod/np.var(Rpred[indxs]), 
     #                  dv_pred3b/np.var(Rpred[indxs3]), 
     #                  dv_pred1b/np.var(Rpred[indxs1])]
     
-    # Predictive powers (model performance): full response and then disparity
-    pps = [predictive_power_binocular( Robs, Rpred, indxs=indxs, Einfo=Einfo, cell_num=cell_num ),
-           #predictive_power_binocular(dobs0, dmod0, indxs=indxs, Einfo=Einfo, cell_num=cell_num),
-           predictive_power_binocular(dobs0-tobs0, dmod0-tmod0, indxs=indxs, Einfo=Einfo, cell_num=cell_num)]
-    # bound possible pps 
+    # Predictive powers (model performance): full response, fr3, fr1
+    pps = [predictive_power( Rpred, data, cell_n=cell_n ),  # predict variance of full response
+           predictive_power( Rpred, data, cell_n=cell_n, inds=indxs3xv ),
+           predictive_power( Rpred, data, cell_n=cell_n, inds=indxs1xv )]
+   
+    Dpps = np.zeros(3)
+    Dpps[0] = 1-varDF(dobs0[data.val_inds]-dmod0[data.val_inds], df=df[data.val_inds]) / \
+        varDF(dobs0[data.val_inds], df=df[data.val_inds])
+    Dpps[1] = 1-varDF(dobs3[indxs3xv]-dmod3[indxs3xv], df=df[indxs3xv]) / \
+        varDF(dobs3[indxs3xv], df=df[indxs3xv])
+    Dpps[2] = 1-varDF(dobs1[indxs1xv]-dmod1[indxs1xv], df=df[indxs1xv]) / \
+        varDF(dobs1[indxs1xv], df=df[indxs1xv])
     
-    pps_dispFR3 = [
-        predictive_power_binocular( dobs0-tobs0, dmod0-tmod0, indxs=indxs3, Einfo=Einfo, cell_num=cell_num ),
-        predictive_power_binocular( dobs3-tobs3, dmod3-tmod3, indxs=indxs3, Einfo=Einfo, cell_num=cell_num )]
-    pps_dispFR1 = [
-        predictive_power_binocular( dobs0-tobs0, dmod0-tmod0, indxs=indxs1, Einfo=Einfo, cell_num=cell_num ),
-        predictive_power_binocular( dobs1-tobs1, dmod1-tmod1, indxs=indxs1, Einfo=Einfo, cell_num=cell_num )]
-
-    print( "Pred powers: %0.3f  disp %0.3f (FR3 %0.3f)"%(pps[0], pps[1], pps_dispFR3[0]))
+    print( "  Pred powers: %0.3f  disp %0.3f (FR3 %0.3f, FR1 %0.3f)"%(pps[0], Dpps[0], Dpps[1], Dpps[2]))
 
     # Add general tuning of each
-    Dtun_info_obs = [disparity_tuning( Einfo, Robs, indxs, fr1or3=3, to_plot=False),
-        disparity_tuning( Einfo, Robs, indxs, fr1or3=1, to_plot=False)]
-    Dtun_info_pred = [disparity_tuning( Einfo, Rpred, indxs, fr1or3=3, to_plot=False),
-        disparity_tuning( Einfo, Rpred, indxs, fr1or3=1, to_plot=False)]
+    Dtun_obs = [disparity_tuning( data, data.robs[:, cell_n], cell_n=cell_n, fr1or3=3 ),
+                     disparity_tuning( data, data.robs[:, cell_n], cell_n=cell_n, fr1or3=1 )]
+    Dtun_pred = [disparity_tuning( data, Rpred, cell_n=cell_n, fr1or3=3),
+                      disparity_tuning( data, Rpred, cell_n=cell_n, fr1or3=1)]
+    # Tuning curve consistency
+    DtuningR2 = [1-np.mean(np.square(Dtun_obs[0]['Dtun']-Dtun_pred[0]['Dtun']))/np.var(Dtun_obs[0]['Dtun']),
+                 1-np.mean(np.square(Dtun_obs[1]['Dtun']-Dtun_pred[1]['Dtun']))/np.var(Dtun_obs[1]['Dtun'])]
+    print( "  Tuning consistency R2s: FR3 %0.3f  FR1 %0.3f"%(DtuningR2[0], DtuningR2[1]))
 
     BMP = {'EVfrac': ev/tv, 'EVvalid': ev_valid, 
            'vars_obs': vars_obs, 'vars_mod': vars_mod, 'vars_obs_FR3': vars_obs_FR3,
            'DVfrac_obs': DVfrac_obs, 'DVfrac_mod': DVfrac_mod, 
-           'pred_powers': pps, 'pps_disp_FR3': pps_dispFR3, 'pps_disp_FR1': pps_dispFR1,
-           'Dtun_obs': Dtun_info_obs, 'Dtun_pred': Dtun_info_pred}
+           'pred_powers': pps, 'disp_pred_powers': Dpps,
+           'Dtun_obs': Dtun_obs, 'Dtun_pred': Dtun_pred, 'DtuningR2': DtuningR2}
     
     return BMP
 
