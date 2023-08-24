@@ -41,13 +41,12 @@ class BarET(SensoryBase):
         # Stim configuation
         combine_stim = False, # if False, horizontal stim will be 'stim'
         stim_gap = 8,
-        drift_interval=None,  # how many trials to anchor each drift term
+        drift_interval=16,  # how many trials to anchor each drift term
         # eye configuration
-        eye_config = 2,  # 0 = all, 1, -1, and 2 are options (2 = binocular)
+        eye_config=3,  # 0 = all, 1, 2, and 3 are options (3 = binocular)
         binocular = False, # whether to include separate filters for each eye
         # other
         #ignore_saccades=True,
-        preload = True,
         device=torch.device('cpu'),
         maxT = None):
         """Constructor options"""
@@ -55,7 +54,7 @@ class BarET(SensoryBase):
         super().__init__(
             filenames=filenames, datadir=datadir, 
             time_embed=time_embed, num_lags=num_lags, 
-            include_MUs=include_MUs, preload=preload,
+            include_MUs=include_MUs,
             drift_interval=drift_interval, device=device)
 
         # Done in constructor
@@ -63,10 +62,7 @@ class BarET(SensoryBase):
         #self.filenames = filenames
         #self.device = device
         #self.num_lags = 10  # default: to be set later
-        #if time_embed == 2:
-        #    assert preload, "Cannot pre-time-embed without preloading."
         #self.time_embed = time_embed
-        #self.preload = preload
         #self.used_inds = []
         #self.NT = 0
 
@@ -201,32 +197,31 @@ class BarET(SensoryBase):
         self.sort_ratingMU = np.array(fhandle['RobsMU_rating'], dtype=np.int64)[0,:]
 
         # Go through saccades to establish val_indices and produce saccade timing vector 
-        if preload:
-            print("Loading data into memory...")
-            self.preload_numpy()
+        #print("Loading data into memory...")
+        self.preload_numpy()
 
-            # Have data_filters represend used_inds (in case it gets through)
-            unified_df = np.zeros([self.NT, 1], dtype=np.float32)
-            unified_df[self.used_inds] = 1.0
-            self.dfs *= unified_df
+        # Have data_filters represend used_inds (in case it gets through)
+        unified_df = np.zeros([self.NT, 1], dtype=np.float32)
+        unified_df[self.used_inds] = 1.0
+        self.dfs *= unified_df
 
-            # Prepare design matrix for drift (on trial-by-trial basis)
-            #self.Xdrift = np.zeros([self.NT, len(self.block_inds)//], dtype=np.float32)
-            #for nn in range(len(self.block_inds)):
-            #    self.Xdrift[self.block_inds[nn], nn] = 1.0
-            NBL = len(self.block_inds)
-            Nanchors = NBL//self.drift_interval
-            anchors = np.zeros(Nanchors, dtype=np.int64)
-            for bb in range(Nanchors):
-                anchors[bb] = self.block_inds[self.drift_interval*bb][0]
-            self.Xdrift = self.design_matrix_drift( self.NT, anchors, zero_left=False, const_right=True)
+        # Prepare design matrix for drift (on trial-by-trial basis)
+        #self.Xdrift = np.zeros([self.NT, len(self.block_inds)//], dtype=np.float32)
+        #for nn in range(len(self.block_inds)):
+        #    self.Xdrift[self.block_inds[nn], nn] = 1.0
+        NBL = len(self.block_inds)
+        Nanchors = NBL//self.drift_interval
+        anchors = np.zeros(Nanchors, dtype=np.int64)
+        for bb in range(Nanchors):
+            anchors[bb] = self.block_inds[self.drift_interval*bb][0]
+        self.Xdrift = self.design_matrix_drift( self.NT, anchors, zero_left=False, const_right=True)
 
-            self.process_fixations()
+        self.process_fixations()
 
-            # Convert data to tensors
-            #if self.device is not None:
-            self.to_tensor(self.device)
-            print("Done")
+        # Convert data to tensors
+        #if self.device is not None:
+        self.to_tensor(self.device)
+        print("Done")
 
         # Create valid indices and first pass of cross-validation indices
         #self.create_valid_indices()
@@ -380,7 +375,7 @@ class BarET(SensoryBase):
         self.stim_dimsH = [1, tmp_stimH.shape[1], 1, num_lags]
         self.stimVout = torch.tensor( tmp_stimV.reshape([NT, -1]), dtype=torch.float32, device=self.device)
         self.stim_dimsV = [1, tmp_stimV.shape[1], 1, num_lags]
-
+        
         if self.combine_stim:
             self.stim_dims = [1, tmp_stimC.shape[1], 1, num_lags]
             self.stim = torch.tensor( 
@@ -475,19 +470,14 @@ class BarET(SensoryBase):
                 return self.avRs
 
         # Otherwise calculate across all data
-        if self.preload:
-            Reff = (self.dfs * self.robs).sum(dim=0).cpu()
-            Teff = self.dfs.sum(dim=0).clamp(min=1e-6).cpu()
-            return (Reff/Teff).detach().numpy()
-        else:
-            print('Still need to implement avRs without preloading')
-            return None
+        Reff = (self.dfs * self.robs).sum(dim=0).cpu()
+        Teff = self.dfs.sum(dim=0).clamp(min=1e-6).cpu()
+        return (Reff/Teff).detach().numpy()
     # END .avrates()
 
     def apply_data_mask( self, dmask, crange=None ):
         """For when data_filters (or a section) is modified based on models, and want to apply
         to the dataset. Ideally would save the original"""
-        assert self.preload, "data must be preloaded to apply mask"
         if not isinstance(dmask, torch.Tensor):
             dmask = torch.tensor(dmask, dtype=torch.float32)
         if len(dmask.shape) == 1:
@@ -636,79 +626,45 @@ class BarET(SensoryBase):
 
     def __getitem__(self, idx):
         
-        if self.preload:
-
-            if self.time_embed == 1:
-                print("get_item time embedding not implemented yet")
-                # if self.folded_lags:
-                #    stim = np.transpose( tmp_stim, axes=[0,2,1,3,4] ) 
-                #else:
-                #    stim = np.transpose( tmp_stim, axes=[0,2,3,4,1] )
-    
-            else:
-                assert self.stim_dims is not None, "Need to assemble_stimulus first."
-
-                if self.combine_stim:
-                    out = {
-                        'stim': self.stim[idx, :], 
-                        'stimH': self.stimHout[idx, :], 
-                        'stimV': self.stimVout[idx, :]}
-                else:
-                    out = {
-                        'stim': self.stim[idx, :], 
-                        'stimV': self.stimVout[idx, :]}
-                out['fix_n'] = self.fix_n[idx]
-                out['Xdrift'] = self.Xdrift[idx]
-
-                if len(self.cells_out) == 0:
-                    out['robs'] = self.robs[idx, :]
-                    out['dfs'] = self.dfs[idx, :]
-                else:
-                    if self.robs_out is not None:
-                        robs_tmp = self.robs_out
-                        dfs_tmp = self.dfs_out
-                    else:
-                        assert isinstance(self.cells_out, list), 'cells_out must be a list'
-                        robs_tmp =  self.robs[:, self.cells_out]
-                        dfs_tmp =  self.dfs[:, self.cells_out]
-
-                    out['robs'] = robs_tmp[idx, :]
-                    out['dfs'] = dfs_tmp[idx, :]
-
-            if len(self.covariates) > 0:
-                self.append_covariates( out, idx)
+        if self.time_embed == 1:
+            print("get_item time embedding not implemented yet")
+            # if self.folded_lags:
+            #    stim = np.transpose( tmp_stim, axes=[0,2,1,3,4] ) 
+            #else:
+            #    stim = np.transpose( tmp_stim, axes=[0,2,3,4,1] )
 
         else:
-            inds = self.valid_inds[idx]
-            stim, stimV = [], []
-            robs = []
-            dfs = []
-            num_dims = self.dims[0]*self.dims[1]*self.dims[2]
+            assert self.stim_dims is not None, "Need to assemble_stimulus first."
 
-            """ Stim """
-            # need file handle
-            f = 0
-            #f = self.file_index[inds]  # problem is this could span across several files
-            print("NOT DONE YET")
-            stim = torch.tensor(self.fhandles[f][stimname][inds,:], dtype=torch.float32)
-            # reshape and flatten stim: currently its NT x NX x NY x Nclrs
-            stim = stim.permute([0,3,1,2]).reshape([-1, num_dims])
-                
-            """ Spikes: needs padding so all are B x NC """ 
-            robs = torch.tensor(self.fhandles[f]['Robs'][inds,:], dtype=torch.float32)
-            if self.include_MUs:
-                robs = torch.cat(
-                    (robs, torch.tensor(self.fhandles[f]['RobsMU'][inds,:], dtype=torch.float32)), 
-                    dim=1)
+            if self.combine_stim:
+                out = {
+                    'stim': self.stim[idx, :], 
+                    'stimH': self.stimHout[idx, :], 
+                    'stimV': self.stimVout[idx, :]}
+            else:
+                out = {
+                    'stim': self.stim[idx, :], 
+                    'stimV': self.stimVout[idx, :]}
+            out['fix_n'] = self.fix_n[idx]
+            out['Xdrift'] = self.Xdrift[idx]
 
-            """ Datafilters: needs padding like robs """
-            dfs = torch.tensor(self.fhandles[f]['DFs'][inds,:], dtype=torch.float32)
-            if self.include_MUs:
-                dfs = torch.cat(
-                    (dfs, torch.tensor(self.fhandles[f]['DFsMU'][inds,:], dtype=torch.float32)),
-                    dim=1)
+            if len(self.cells_out) == 0:
+                out['robs'] = self.robs[idx, :]
+                out['dfs'] = self.dfs[idx, :]
+            else:
+                if self.robs_out is not None:
+                    robs_tmp = self.robs_out
+                    dfs_tmp = self.dfs_out
+                else:
+                    assert isinstance(self.cells_out, list), 'cells_out must be a list'
+                    robs_tmp =  self.robs[:, self.cells_out]
+                    dfs_tmp =  self.dfs[:, self.cells_out]
 
-            out = {'stim': stim, 'stimV': stimV, 'robs': robs, 'dfs': dfs, 'fix_n': self.fix_n[inds]}
+                out['robs'] = robs_tmp[idx, :]
+                out['dfs'] = dfs_tmp[idx, :]
+
+        if len(self.covariates) > 0:
+            self.append_covariates( out, idx)
 
         ### THIS IS NOT NEEDED WITH TIME-EMBEDDING: needs to be on fixation-process side...
         #         # Augment to eliminate first X time steps in data_filters
