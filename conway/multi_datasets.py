@@ -485,7 +485,7 @@ class MultiClouds(SensoryBase):
             self, expt_n=None,
             which_stim=None, top_corner=None, L=None,  # position of stim
             time_embed=0, 
-            shifts=None, BUF=20, # shift buffer
+            eyepos=None, BUF=20, # eye position (not shifts)
             stim_crop=None,
             LMS=False,
             fixdot=0 ):
@@ -495,6 +495,8 @@ class MultiClouds(SensoryBase):
             or just top_corner and L
         which is torch.tensor on default device
         stim_wrap: only works if using 'which_stim', and will be [hwrap, vwrap]"""
+
+        #eyepos = shifts   # shifts that is passed in is actually the eye position
 
         assert expt_n is not None, "CONSTRUCT_STIMULUS: must specify expt_n"
         # Delete existing stim and clear cache to prevent memory issues on GPU
@@ -554,7 +556,7 @@ class MultiClouds(SensoryBase):
 
                 stim_pos = [top_corner[0], top_corner[1], top_corner[0]+L, top_corner[1]+L]
 
-            if shifts is not None:
+            if eyepos is not None:
                 need2crop = True
                 # Extend stim window by BUFF-per-side in each direction
                 stim_pos = [
@@ -615,13 +617,13 @@ class MultiClouds(SensoryBase):
             for xx in fixranges[0]:
                 newstim[:, :, xx, fixranges[1]] = 0
 
-        if shifts is not None:
+        if eyepos is not None:
             # Would want to shift by input eye positions if input here
             #print('eye-position shifting not implemented yet')
             print('  Shifting stim...')
-            if len(shifts) > newstim.shape[0]:
-                shifts = shifts[self.tranges[expt_n]]
-            newstim = self.shift_stim( newstim, shifts )
+            if len(eyepos) > newstim.shape[0]:
+                eyepos = eyepos[self.tranges[expt_n]]
+            newstim = self.shift_stim( newstim, eyepos )
 
         # Reduce size back to original If expanded to handle shifts
         if need2crop:
@@ -889,7 +891,7 @@ class MultiClouds(SensoryBase):
     # USE SENSORY-BASE -- should be set up now....
 
     @staticmethod 
-    def shift_stim( stim, shifts, input_dims=None, batch_size=5000):
+    def shift_stim( stim, eyepos, input_dims=None, batch_size=5000):
 
         from torch.utils.data import DataLoader
         from tqdm import tqdm
@@ -907,7 +909,7 @@ class MultiClouds(SensoryBase):
         stim_data = {
             'ts': torch.tensor(np.arange(stim.shape[0]), dtype=torch.int64),  # keep track of indices for remapping
             'stim': torch.tensor(stim, dtype=torch.float32),
-            'eyepos': torch.tensor(shifts, dtype=torch.float32)*Lscale }
+            'eyepos': torch.tensor(eyepos, dtype=torch.float32)*Lscale }
 
         ds = GenericDataset(stim_data, device=None)
         #ds.covariates['stim'] = ds.covariates['stim'].flatten(start_dim=1)
