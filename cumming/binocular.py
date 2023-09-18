@@ -85,6 +85,8 @@ class binocular_single(SensoryBase):
         self.used_inds = used_inds
         self.train_inds = np.intersect1d(used_inds, np.where(self.Ui_analog > 0)[0])
         self.val_inds = np.intersect1d(used_inds, np.where(self.Xi_analog > 0)[0])
+        self.val_indsA = np.intersect1d(used_inds, np.where(self.XiA_analog > 0)[0])
+        self.val_indsB = np.intersect1d(used_inds, np.where(self.XiB_analog > 0)[0])
 
         dispt_raw = Bmatdat['all_disps'][:,0]
         # this has the actual disparity values, which are at the resolution of single bars, and centered around the neurons
