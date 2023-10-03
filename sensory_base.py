@@ -103,6 +103,10 @@ class SensoryBase(Dataset):
         NT = cov.shape[0]
         assert self.NT == NT, "Wrong number of time points"
 
+        if cov_name in self.covariates:
+            print('  Discarding old', cov_name)
+            del self.covariates[cov_name]
+
         self.cov_dims[cov_name] = dims
         if isinstance(cov, torch.Tensor):
             self.covariates[cov_name] = deepcopy(cov)
@@ -247,6 +251,54 @@ class SensoryBase(Dataset):
         return psths
     # END SensoryBase.calculate_psths()
 
+    def construct_LVtents( self, tent_spacing=12 ):
+        """Constructs tent-basis-style trial-based tent function
+        Inputs: 
+            num_tents: default 11
+            cueduncued: whether to fit separate kernels to cued/uncued
+            """
+        
+        if self.block_inds is not None:
+            # Compute minimum and maximum trial size
+            Ntr = len(self.block_inds)
+            min_trial_size, max_trial_size = len(self.block_inds[0]), 0
+            for ii in range(Ntr):
+                if len(self.block_inds[ii]) < min_trial_size:
+                    min_trial_size = len(self.block_inds[ii])
+                if len(self.block_inds[ii]) > max_trial_size:
+                    max_trial_size = len(self.block_inds[ii])
+                    
+            if tent_spacing > min_trial_size:
+                print('Using one LV per trial')
+                XLV = np.zeros((self.NT, Ntr), dtype=np.float32)
+                for tr in range(Ntr):
+                    XLV[self.block_inds[tr], tr] = 1.0
+                LVdims = [1, Ntr]
+            else:
+                # automatically wont have any anchors past min_trial_size
+                anchors = np.arange(0, min_trial_size, tent_spacing) 
+                # Generate master tent_basis
+                trial_tents = self.design_matrix_drift(
+                    max_trial_size, anchors, zero_left=False, zero_right=True, const_right=False)
+                num_tents_tr = trial_tents.shape[1]
+                num_tents = num_tents_tr * Ntr
+                LVdims = [Ntr, num_tents_tr] 
+                XLV = np.zeros((self.NT, num_tents), dtype=np.float32)
+                for tr in range(Ntr):
+                    L = len(self.block_inds[tr])
+                    vslice = np.zeros([L, num_tents], dtype=np.float32)
+                    vslice[:, tr*num_tents_tr+np.arange(num_tents_tr)] = trial_tents[:L, :]
+                    XLV[self.block_inds[tr], :] = deepcopy(vslice)
+        else:
+            #print('Trial-less LV setup not implemented yet, but should be easy.'
+            anchors = np.arange(0, self.NT, tent_spacing) 
+            XLV = self.design_matrix_drift(
+                max_trial_size, anchors, zero_left=False, zero_right=True, const_right=False)
+            num_tents = XLV.shape[1]
+            LVdims = [1, num_tents]
+        return XLV, LVdims  # numpy array
+    # END SensoryBase.construct_LVtents()
+    
     @staticmethod
     def design_matrix_drift( NT, anchors, zero_left=True, zero_right=False, const_left=False, const_right=False, to_plot=False):
         """Produce a design matrix based on continuous data (s) and anchor points for a tent_basis.
@@ -296,7 +348,7 @@ class SensoryBase(Dataset):
             plt.show()
 
         return X
-
+    
     @staticmethod
     def construct_onehot_design_matrix( stim=None, return_categories=False ):
         """the stimulus should be numpy -- not meant to be used with torch currently"""
