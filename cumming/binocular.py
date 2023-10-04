@@ -93,6 +93,11 @@ class binocular_single(SensoryBase):
         # disparity (sometime shifted to drive neurons well)
         # Sometimes a slightly disparity is used, so it helps to round the values at some resolution
         self.dispt = np.round(dispt_raw*100)/100
+        # Fix expt10
+        if expt_num == 10:  # make the uncommon disparity (at the extreme) into uncorrelated, which is it anyway...
+            print('  dispt-fix for expt 10') 
+            self.dispt[self.dispt > 0.5] = -1005
+
         self.frs = Bmatdat['all_frs'][:,0]
         self.corrt = Bmatdat['all_corrs'][:,0]
         # Make dispt consistent with corrt (early experiments had dispt labeled incorrectly)

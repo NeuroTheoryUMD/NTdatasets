@@ -287,7 +287,7 @@ def disparity_predictions(
     lbfgs_pars = utils.create_optimizer_params(
         optimizer_type='lbfgs',
         tolerance_change=1e-8, tolerance_grad=1e-8,
-        history_size=100, batch_size=1000, max_epochs=3, max_iter=500)
+        history_size=100, batch_size=4000, max_epochs=3, max_iter=500)
  
     if rectified:
         nltype = 'softplus'
@@ -308,11 +308,12 @@ def disparity_predictions(
     tpredmod = NDN.NDN( layer_list=[tpred_layer], loss_type=losstype )
     tpredmod.networks[0].xstim_n = 'timing'
 
-    dpredmod.fit( Ddata, force_dict_training=True, train_inds=mod_indxs, val_inds=mod_indxs, 
-                **lbfgs_pars, verbose=0, version=1)
-
-    tpredmod.fit( Ddata, force_dict_training=True, train_inds=mod_indxs, val_inds=mod_indxs, 
-                **lbfgs_pars, verbose=0, version=1)
+    #dpredmod.fit( Ddata, force_dict_training=True, train_inds=mod_indxs, val_inds=mod_indxs, 
+    #            **lbfgs_pars, verbose=0, version=1)
+    utils.iterate_lbfgs( dpredmod, Ddata, lbfgs_pars, train_inds=mod_indxs, val_inds=mod_indxs, verbose=False )
+    utils.iterate_lbfgs( tpredmod, Ddata, lbfgs_pars, train_inds=mod_indxs, val_inds=mod_indxs, verbose=False )
+    #tpredmod.fit( Ddata, force_dict_training=True, train_inds=mod_indxs, val_inds=mod_indxs, 
+    #            **lbfgs_pars, verbose=0, version=1)
 
     tpred = tpredmod(Ddata[:]).detach().numpy()
     dpred = dpredmod(Ddata[:]).detach().numpy()
@@ -386,8 +387,13 @@ def binocular_model_performance( data=None, cell_n=None, Rpred=None ):
 
 
     ## Model-based performance measures - need cross-validation indices only
-    indxs3xv = np.intersect1d( data.val_inds, np.where(data.frs == 3)[0] )
-    indxs1xv = np.intersect1d( data.val_inds, np.where(data.frs == 1)[0] )
+    #indxs3xv = np.intersect1d( data.val_inds, indxs3 )
+    #indxs1xv = np.intersect1d( data.val_inds, indxs1 )
+    rep1inds = np.intersect1d(data.val_inds, data.rep_inds[cell_n][:,0])
+    rep2inds = np.intersect1d(data.val_inds, data.rep_inds[cell_n][:,1])
+    allreps = np.concatenate((rep1inds, rep2inds), axis=0)
+    indxs3xv = np.intersect1d( allreps, indxs3 )
+    indxs1xv = np.intersect1d( allreps, indxs1 )
 
     #DVfrac_mod_alt = [dv_mod/np.var(Rpred[indxs]), 
     #                  dv_pred3b/np.var(Rpred[indxs3]), 
@@ -399,13 +405,26 @@ def binocular_model_performance( data=None, cell_n=None, Rpred=None ):
            predictive_power( Rpred, data, cell_n=cell_n, inds=indxs1xv )]
    
     Dpps = np.zeros(3)
-    Dpps[0] = 1-varDF(dobs0[data.val_inds]-dmod0[data.val_inds], df=df[data.val_inds]) / \
-        varDF(dobs0[data.val_inds], df=df[data.val_inds])
-    Dpps[1] = 1-varDF(dobs3[indxs3xv]-dmod3[indxs3xv], df=df[indxs3xv]) / \
-        varDF(dobs3[indxs3xv], df=df[indxs3xv])
-    Dpps[2] = 1-varDF(dobs1[indxs1xv]-dmod1[indxs1xv], df=df[indxs1xv]) / \
-        varDF(dobs1[indxs1xv], df=df[indxs1xv])
-    
+    #Dpps[0] = 1-varDF(dobs0[data.val_inds]-dmod0[data.val_inds], df=df[data.val_inds]) / \
+    #    varDF(dobs0[data.val_inds], df=df[data.val_inds])
+    #Dpps[1] = 1-varDF(dobs3[indxs3xv]-dmod3[indxs3xv], df=df[indxs3xv]) / \
+    #    varDF(dobs3[indxs3xv], df=df[indxs3xv])
+    #Dpps[2] = 1-varDF(dobs1[indxs1xv]-dmod1[indxs1xv], df=df[indxs1xv]) / \
+    #    varDF(dobs1[indxs1xv], df=df[indxs1xv])
+    dobs_only0 = dobs0-tobs0
+    dobs_only3 = dobs3-tobs3
+    dobs_only1 = dobs1-tobs1
+    dmod_only0 = dmod0-tmod0
+    dmod_only3 = dmod3-tmod3
+    dmod_only1 = dmod1-tmod1
+
+    Dpps[0] = 1-varDF(dobs_only0[data.val_inds]-dmod_only0[data.val_inds], df=df[data.val_inds], mean_adj=False) / \
+        varDF(dobs_only0[data.val_inds], df=df[data.val_inds])
+    Dpps[1] = 1-varDF(dobs_only3[indxs3xv]-dmod_only3[indxs3xv], df=df[indxs3xv], mean_adj=False) / \
+        varDF(dobs_only3[indxs3xv], df=df[indxs3xv])
+    Dpps[2] = 1-varDF(dobs_only1[indxs1xv]-dmod_only1[indxs1xv], df=df[indxs1xv], mean_adj=False) / \
+        varDF(dobs_only1[indxs1xv], df=df[indxs1xv])
+
     print( "  Pred powers: %0.3f  disp %0.3f (FR3 %0.3f, FR1 %0.3f)"%(pps[0], Dpps[0], Dpps[1], Dpps[2]))
 
     # Add general tuning of each
