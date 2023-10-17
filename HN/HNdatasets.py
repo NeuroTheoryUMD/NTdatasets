@@ -46,7 +46,7 @@ class HNdataset(SensoryBase):
         self.NT, self.NC = self.robs.shape
         # Make datafilters
         self.dfs = torch.zeros( [self.NT, self.NC], dtype=torch.float32 )
-        self.used_inds = matdat['used_inds'][:,0].astype(np.int64) - 1
+        self.used_inds = matdat['used_inds'].squeeze().astype(np.int64) - 1
         self.dfs[self.used_inds, :] = 1.0
         #modvars = matdat['moduvar']
 
@@ -476,7 +476,7 @@ class MotionNeural(SensoryBase):
             self.Xadapt[self.block_inds[tr], :] = torch.tensor(trial_tents[:L, :], dtype=torch.float32)
     # END MotionNeural.construct_Xadapt()
 
-    def autoencoder_design_matrix( self, pre_win=0, post_win=0, blank=0, cells=None ):
+    def autoencoder_design_matrix( self, trial_level=False, pre_win=0, post_win=0, blank=0, cells=None ):
         """Makes auto-encoder input using windows described above, and including the
         chosen cells. Will put as additional covariate "ACinput" in __get_item__
         Inputs:
@@ -489,18 +489,26 @@ class MotionNeural(SensoryBase):
             cells = np.arange(self.NC)
         Rraw = deepcopy(self.robs[:, cells])
         self.ACinput = torch.zeros(Rraw.shape, dtype=torch.float32)
-        nsteps = 0
-        if blank == 0:
-            self.ACinput += Rraw
-            nsteps = 1
-        for ii in range(1, (pre_win+1)):
-            self.ACinput[ii:, :] += Rraw[:(-ii), :]
-            nsteps += 1
-        for ii in range(1, (post_win+1)):
-            self.ACinput[:(-ii), :] += Rraw[ii:, :]
-            nsteps += 1
-        assert nsteps > 0, "autoencoder design: invalid parameters"
-        self.ACinput *= 1.0/nsteps
+
+        if trial_level:
+            assert len(self.block_inds) > 0, "No trials: trial-level autoencoder will not work."
+            for tt in range(len(self.block_inds)):
+                ts = self.block_inds[tt]
+                self.ACinput[ts, :] = torch.ones([len(ts), 1]) @ torch.mean(Rraw[ts, :], axis=0)[None, :]
+        else:
+            nsteps = 0
+            if blank == 0:
+                self.ACinput += Rraw
+                nsteps = 1
+            for ii in range(1, (pre_win+1)):
+                self.ACinput[ii:, :] += Rraw[:(-ii), :]
+                nsteps += 1
+            for ii in range(1, (post_win+1)):
+                self.ACinput[:(-ii), :] += Rraw[ii:, :]
+                nsteps += 1
+            assert nsteps > 0, "autoencoder design: invalid parameters"
+            self.ACinput *= 1.0/nsteps
+
         self.ACinput *= self.dfs[:, cells]
     # END MotionNeural.autoencoder_design_matrix
 

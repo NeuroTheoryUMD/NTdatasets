@@ -85,12 +85,19 @@ class binocular_single(SensoryBase):
         self.used_inds = used_inds
         self.train_inds = np.intersect1d(used_inds, np.where(self.Ui_analog > 0)[0])
         self.val_inds = np.intersect1d(used_inds, np.where(self.Xi_analog > 0)[0])
+        self.val_indsA = np.intersect1d(used_inds, np.where(self.XiA_analog > 0)[0])
+        self.val_indsB = np.intersect1d(used_inds, np.where(self.XiB_analog > 0)[0])
 
         dispt_raw = Bmatdat['all_disps'][:,0]
         # this has the actual disparity values, which are at the resolution of single bars, and centered around the neurons
         # disparity (sometime shifted to drive neurons well)
         # Sometimes a slightly disparity is used, so it helps to round the values at some resolution
         self.dispt = np.round(dispt_raw*100)/100
+        # Fix expt10
+        if expt_num == 10:  # make the uncommon disparity (at the extreme) into uncorrelated, which is it anyway...
+            print('  dispt-fix for expt 10') 
+            self.dispt[self.dispt > 0.5] = -1005
+
         self.frs = Bmatdat['all_frs'][:,0]
         self.corrt = Bmatdat['all_corrs'][:,0]
         # Make dispt consistent with corrt (early experiments had dispt labeled incorrectly)
