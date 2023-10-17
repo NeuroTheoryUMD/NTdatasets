@@ -764,42 +764,6 @@ class MultiClouds(SensoryBase):
         return newstim
     # END MultiClouds.crop_stim()
 
-#    def process_fixations( self, sacc_in=None ):
-#        """Processes fixation informatiom from dataset, but also allows new saccade detection
-#        to be input and put in the right format within the dataset (main use)"""
-#        if sacc_in is None:
-#            sacc_in = self.sacc_inds[:, 0]
-#        else:
-#            print( "  Redoing fix_n with saccade inputs: %d saccades"%len(sacc_in) )
-#            if self.start_t > 0:
-#                print( "  -> Adjusting timing for non-zero start time in this dataset.")
-#            sacc_in = sacc_in - self.start_t
-#            sacc_in = sacc_in[sacc_in > 0]
-#
-#        fix_n = np.zeros(self.NT, dtype=np.int64) 
-#        fix_count = 0
-#        for ii in range(len(self.block_inds)):
-#            # Parse fixation numbers within block
-#            rel_saccs = np.where((sacc_in > self.block_inds[ii][0]+6) & (sacc_in < self.block_inds[ii][-1]-5))[0]
-#
-#            tfix = self.block_inds[ii][0]  # Beginning of fixation by definition
-#            for mm in range(len(rel_saccs)):
-#                fix_count += 1
-#                # Range goes to beginning of next fixation (note no gap)
-#                fix_n[ range(tfix, sacc_in[rel_saccs[mm]]) ] = fix_count
-#                tfix = sacc_in[rel_saccs[mm]]
-#            # Put in last (or only) fixation number
-#            if tfix < self.block_inds[ii][-1]:
-#                fix_count += 1
-#                fix_n[ range(tfix, self.block_inds[ii][-1]) ] = fix_count
-#
-#        # Determine whether to be numpy or tensor
-#        if isinstance(self.robs, torch.Tensor):
-#            self.fix_n = torch.tensor(fix_n, dtype=torch.int64, device=self.robs.device)
-#        else:
-#            self.fix_n = fix_n
-    # END: ColorClouds.process_fixations()
-
 #    def augment_dfs( self, new_dfs, cells=None ):
 #        """Replaces data-filter for given cells. note that new_df should be np.ndarray"""
 #        
@@ -889,6 +853,157 @@ class MultiClouds(SensoryBase):
     #def set_cells(self, **kwargs):
     #    raise( Exception('set_cells does not work with MultiClouds.') )
     # USE SENSORY-BASE -- should be set up now....
+
+    def shift_stim_oldstyle(
+        self, stim=None, pos_shifts=None, metrics=None, metric_threshold=1, ts_thresh=8, fix_n=None,
+        shift_times=None ):
+        """Shift stimulus given standard shifting input (TBD)
+        use 'shift-times' if given shifts correspond to range of times"""
+        NX = self.stim_dims[1]
+        nlags = self.stim_dims[3]
+
+        # Check if has been time-lagged yet
+        if stim is None:
+            stim0 = self.stim
+        else:
+            stim0 = stim
+
+        already_lagged=False
+        if len(stim0.shape) == 2:
+            [NT, ND] = stim0.shape
+            if ND > self.stim_dims[0]*NX*NX:  # then lags in stim
+                re_stim = deepcopy(stim0).reshape([-1] + self.stim_dims)[..., 0]
+                already_lagged = True
+            else:
+                re_stim = deepcopy(stim0).reshape([-1] + self.stim_dims[:3])
+        else:
+            assert len(stim0) > 2, "Stim be already shaped according shape, but seems not"
+            re_stim = deepcopy(stim)
+
+        if fix_n is None:
+            fix_n = np.array(self.fix_n, dtype=np.int64)
+
+        # Apply shift-times (subset)
+        if shift_times is not None:
+            fix_n = fix_n[shift_times]
+            # Find minimum fix_n and make = 1
+            min_fix_n = np.min(fix_n[fix_n > 0])
+            #print('min_fix_n', min_fix_n, 'adjust', 1-min_fix_n)
+            fix_n[fix_n > 0] += 1-min_fix_n
+            re_stim = re_stim[shift_times, ...]
+            #print('max fix', np.max(fix_n), fix_n.shape)
+        
+        NF = np.max(fix_n)
+        NTtmp = re_stim.shape[0]
+        nclr = self.stim_dims[0]
+        #sh0 = -(pos_shifts[:,0]-self.dims[1]//2)
+        #sh1 = -(pos_shifts[:,1]-self.dims[2]//2)
+        sh0 = pos_shifts[:, 0]  # this should be in units of pixels relative to 0
+        sh1 = pos_shifts[:, 1]
+
+        sp_stim = deepcopy(re_stim)
+        if metrics is not None:
+            val_fix = metrics > metric_threshold
+            print("  Applied metric threshold: %d/%d"%(np.sum(val_fix), NF))
+        else:
+            val_fix = np.array([True]*NF)
+
+        for ff in range(NF):
+            ts = np.where(fix_n == ff+1)[0]
+            #print(ff, len(ts), ts[0], ts[-1])
+
+            if (abs(sh0[ff])+abs(sh1[ff]) > 0) & (len(ts) > ts_thresh) & val_fix[ff] & (ts[-1] < self.NT):
+                # FIRST SP DIM shift
+                sh = int(sh0[ff])
+                stim_seg = re_stim[ts, ...]
+                if sh > 0:
+                    stim_tmp = torch.zeros([len(ts), nclr, NX, NX], dtype=torch.float32)
+                    stim_tmp[:, :,sh:, :] = deepcopy(stim_seg[:, :, :(-sh), :])
+                elif sh < 0:
+                    stim_tmp = torch.zeros([len(ts), nclr, NX, NX], dtype=torch.float32)
+                    stim_tmp[:, :, :sh, :] = deepcopy(stim_seg[:, :, (-sh):, :])
+                else:
+                    stim_tmp = deepcopy(stim_seg)
+
+                # SECOND SP DIM shift
+                sh = int(sh1[ff])
+                if sh > 0:
+                    stim_tmp2 = torch.zeros([len(ts), nclr, NX,NX], dtype=torch.float32)
+                    stim_tmp2[... , sh:] = deepcopy(stim_tmp[..., :(-sh)])
+                elif sh < 0:
+                    stim_tmp2 = torch.zeros([len(ts), nclr, NX,NX], dtype=torch.float32)
+                    stim_tmp2[..., :sh] = deepcopy(stim_tmp[..., (-sh):])
+                else:
+                    stim_tmp2 = deepcopy(stim_tmp)
+                    
+                sp_stim[ts, ... ] = deepcopy(stim_tmp2)
+
+        if already_lagged:
+            # Time-embed
+            idx = np.arange(NTtmp)
+            laggedstim = sp_stim[np.arange(NTtmp)[:,None]-np.arange(nlags), ...]
+            return np.transpose( laggedstim, axes=[0,2,3,4,1] )
+        else:
+            return sp_stim
+    # END ColorCloud.shift_stim -- note outputs stim rather than overwrites
+
+    def process_fixations(self, sacc_in=None, expt_n=0, 
+                          sacc_metrics=None, thresh=None, dur_thresh=8,
+                          modify_dfs=False):
+        """Generates fix_n based on existing trial structure and imported fixations. Will only work for specified
+        experiment (expt_n variable) and assume timings are based on the beginning of that experiment.
+        Output: fix_n
+
+        Default: modify_dfs=True will zero out data where there is no assigned fixation
+        
+        Note that this will assume that saccades correspond to relevant trange (e.g., binocular section) rather
+        than the whole experiment.
+        
+        Can also use metric criteria to only use fraction of total saccades: sacc_metrics can be amplitude, and 
+        sacc_thresh be inclusion criteria (must be greater than sacc_thresh)
+        """
+
+        assert sacc_in is not None, "Need to enter saccade times"
+        NT = self.fileNT[expt_n]
+        assert np.max(sacc_in) < NT, "sacc list is too long"
+        if sacc_metrics is None:
+            sac_ts = sacc_in
+        else:
+            assert len(sacc_metrics) == len(sacc_in), "Saccade metrics must match length of sacc_in"
+            sac_ts = sacc_in[np.where(sacc_metrics >= thresh)[0]]
+        sacc_rate = len(sac_ts)/(NT/60.0)
+        print( "  Generating fix_n for expt %d with %d valid saccades (%0.2f Hz)"%(expt_n, len(sac_ts), sacc_rate) )
+
+        fix_n = np.zeros(NT, dtype=np.int64) 
+        fix_count = 0
+        for ii in range(len(self.block_inds)):
+            #if self.block_inds[ii][0] < self.NT:
+            # note this will be the inds in each file -- file offset must be added for mult files
+            #self.block_inds.append(np.arange( blk_inds[ii,0], blk_inds[ii,1], dtype=np.int64))
+
+            # Parse fixation numbers within block
+            rel_saccs = np.where((sac_ts > self.block_inds[ii][0]+6) & (sac_ts < self.block_inds[ii][-1]-5))[0]
+
+            tfix = self.block_inds[ii][0]  # Beginning of fixation by definition
+            for mm in range(len(rel_saccs)):
+                if sac_ts[rel_saccs[mm]]-tfix >= dur_thresh:
+                    fix_count += 1
+                    # Range goes to beginning of next fixation (note no gap)
+                    fix_n[ range(tfix, sac_ts[rel_saccs[mm]]) ] = fix_count
+                tfix = sac_ts[rel_saccs[mm]]
+            # Put in last (or only) fixation number
+            if tfix < self.block_inds[ii][-1]:
+                fix_count += 1
+                fix_n[ range(tfix, self.block_inds[ii][-1]) ] = fix_count
+
+        print("  Created %d fixations"%fix_count)
+
+        if modify_dfs:
+            invalid_fix_n = np.where(fix_n == 0)[0]
+            self.dfs[invalid_fix_n, :] = 0
+            
+        return fix_n.astype(np.int64)
+    # END: MultiClouds.process_fixations()
 
     @staticmethod 
     def shift_stim( stim, eyepos, input_dims=None, batch_size=5000):
