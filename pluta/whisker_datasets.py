@@ -334,10 +334,10 @@ class WhiskerData(SensoryBase):
         TRpistons = np.zeros(Ntr, dtype='int64')
         TRoutcomes = np.zeros(Ntr, dtype='int64')
         for nn in range(Ntr):
-            ps = np.median(pistons[range(blks[nn,0], blks[nn,1]),:], axis=0)
+            ps = np.max(pistons[range(blks[nn,0], blks[nn,1]),:], axis=0)
             TRpistons[nn] = (ps[0] + 2*ps[1] + 4*ps[2] + 8*ps[3]).astype('int64')
             if outcomes is not None:
-                os = np.where(np.median(outcomes[range(blks[nn,0], blks[nn,1]),:], axis=0) > 0)[0]
+                os = np.where(np.max(outcomes[range(blks[nn,0], blks[nn,1]),:], axis=0) > 0)[0]
                 if len(os) != 1:
                     print("Warning: trial %d had unclear outcome."%nn)
                 else:
@@ -345,7 +345,7 @@ class WhiskerData(SensoryBase):
         # Reclassify unilateral (or no) touch trials as Rew = 5
         unilateral = np.where((TRpistons <=2) | (TRpistons == 4) | (TRpistons==8))[0]
         TRoutcomes[unilateral] = 5
-        
+        print(TRpistons)
         return(TRpistons, TRoutcomes)
 
     @staticmethod
