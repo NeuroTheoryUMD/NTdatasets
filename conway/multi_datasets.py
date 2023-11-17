@@ -206,29 +206,30 @@ class MultiClouds(SensoryBase):
                 self.Xdrift[self.file_tstart[ff]+np.arange(self.fileNT[ff]), :] = deepcopy(tslice)
                 anchor_count += Xdrift_expts[ff].shape[1]
 
-            # Determine overall valid-inds and cross-validation indices
-            self.val_blks, self.train_blks = [], []
-            folds = 5
-            random_gen = False
-            for ff in range(self.Nexpts):
-                Nblks = self.file_info[ff]['trial_info'].shape[0]
-                val_blk_e, tr_blk_e = self.fold_sample(Nblks, folds, random_gen=random_gen)
-                if ff == 0:
-                    self.val_blks = deepcopy(val_blk_e) + self.file_blkstart[ff]
-                    self.train_blks = deepcopy(tr_blk_e) + self.file_blkstart[ff]
-                else:
-                    self.val_blks = np.concatenate( (self.val_blks, deepcopy(val_blk_e)+self.file_blkstart[ff]), axis=0)
-                    self.train_blks = np.concatenate( (self.train_blks, deepcopy(tr_blk_e)+self.file_blkstart[ff]), axis=0 )
+        # Determine overall valid-inds and cross-validation indices
+        self.val_blks, self.train_blks = [], []
+        folds = 5
+        random_gen = False
+        for ff in range(self.Nexpts):
+            Nblks = self.file_info[ff]['trial_info'].shape[0]
+            val_blk_e, tr_blk_e = self.fold_sample(Nblks, folds, random_gen=random_gen)
+            if ff == 0:
+                self.val_blks = deepcopy(val_blk_e) + self.file_blkstart[ff]
+                self.train_blks = deepcopy(tr_blk_e) + self.file_blkstart[ff]
+            else:
+                self.val_blks = np.concatenate( (self.val_blks, deepcopy(val_blk_e)+self.file_blkstart[ff]), axis=0)
+                self.train_blks = np.concatenate( (self.train_blks, deepcopy(tr_blk_e)+self.file_blkstart[ff]), axis=0 )
 
-            self.val_inds, self.train_inds = [], []
-            for bb in self.val_blks:
-                if len(self.val_inds) == 0:
-                    self.val_inds = deepcopy(self.block_inds[bb])
-                else:
-                    self.val_inds = np.concatenate( (self.val_inds, self.block_inds[bb]), axis=0 )
-            for bb in self.train_blks:
-                self.train_inds = np.concatenate( (self.train_inds, self.block_inds[bb]), axis=0 )
-
+        self.val_inds, self.train_inds = [], []
+        for bb in self.val_blks:
+            if len(self.val_inds) == 0:
+                self.val_inds = deepcopy(self.block_inds[bb])
+            else:
+                self.val_inds = np.concatenate( (self.val_inds, self.block_inds[bb]), axis=0 )
+        for bb in self.train_blks:
+            self.train_inds = np.concatenate( (self.train_inds, self.block_inds[bb]), axis=0 )
+        self.train_inds = self.train_inds.astype(np.int64)
+        self.val_inds = self.val_inds.astype(np.int64)
     # END MultiClouds.__init__
 
     def read_file_info( self, file_n, filename ):
