@@ -321,10 +321,11 @@ def disparity_predictions(
     return dpred, tpred
 
 
-def binocular_model_performance( data=None, cell_n=None, Rpred=None ):
+def binocular_model_performance( data=None, cell_n=None, Rpred=None, valset=None ):
     """Current best-practices for generating prediction quality of neuron and binocular tuning. Currently we
     are not worried about using cross-validation indices only (as they are based on much less data and tend to
-    otherwise be in agreement with full measures, but this option could be added in later versions."""
+    otherwise be in agreement with full measures, but this option could be added in later versions.
+    valset can be None (use all val_inds, 'a' or 'b': use subset)"""
 
     assert data is not None, 'Need to include dataset'
     assert cell_n is not None, 'Must specify cell to check'
@@ -387,11 +388,20 @@ def binocular_model_performance( data=None, cell_n=None, Rpred=None ):
 
 
     ## Model-based performance measures - need cross-validation indices only
+    if valset is None:
+        v_inds = data.val_inds
+    elif valset in ['a', 'A']:
+        v_inds = data.val_indsA
+    else:
+        v_inds = data.val_indsB
+
     #indxs3xv = np.intersect1d( data.val_inds, indxs3 )
     #indxs1xv = np.intersect1d( data.val_inds, indxs1 )
-    rep1inds = np.intersect1d(data.val_inds, data.rep_inds[cell_n][:,0])
-    rep2inds = np.intersect1d(data.val_inds, data.rep_inds[cell_n][:,1])
+    rep1inds = np.intersect1d(v_inds, data.rep_inds[cell_n][:,0])
+    rep2inds = np.intersect1d(v_inds, data.rep_inds[cell_n][:,1])
     allreps = np.concatenate((rep1inds, rep2inds), axis=0)
+    print('len reps', len(allreps))
+
     indxs3xv = np.intersect1d( allreps, indxs3 )
     indxs1xv = np.intersect1d( allreps, indxs1 )
 
@@ -418,8 +428,8 @@ def binocular_model_performance( data=None, cell_n=None, Rpred=None ):
     dmod_only3 = dmod3-tmod3
     dmod_only1 = dmod1-tmod1
 
-    Dpps[0] = 1-varDF(dobs_only0[data.val_inds]-dmod_only0[data.val_inds], df=df[data.val_inds], mean_adj=False) / \
-        varDF(dobs_only0[data.val_inds], df=df[data.val_inds])
+    Dpps[0] = 1-varDF(dobs_only0[v_inds]-dmod_only0[v_inds], df=df[v_inds], mean_adj=False) / \
+        varDF(dobs_only0[v_inds], df=df[v_inds])
     Dpps[1] = 1-varDF(dobs_only3[indxs3xv]-dmod_only3[indxs3xv], df=df[indxs3xv], mean_adj=False) / \
         varDF(dobs_only3[indxs3xv], df=df[indxs3xv])
     Dpps[2] = 1-varDF(dobs_only1[indxs1xv]-dmod_only1[indxs1xv], df=df[indxs1xv], mean_adj=False) / \
