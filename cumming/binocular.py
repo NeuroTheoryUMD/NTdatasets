@@ -42,6 +42,7 @@ class binocular_single(SensoryBase):
         Bmatdat = sio.loadmat(self.datadir+filename)
         self.Bstim = Bmatdat['stim'][:, stim_trim]
         self.dims = [1, 72, 1, 1]
+        self.divide_stim=False
         # Note Bstim is stored as numpy
 
         # Responses
@@ -151,6 +152,13 @@ class binocular_single(SensoryBase):
         self.stim_dims[3] = num_lags
     # END binocular_single.prepare_stim()
 
+    def separate_eyes(self, val=True):
+        NX = self.stim_dims[1]//2
+        stim = self.stim.reshape([self.NT, 2*NX, self.num_lags])
+        self.stimL = stim[:, :NX, :].reshape([self.NT, -1])
+        self.stimR = stim[:, NX:, :].reshape([self.NT, -1])
+        self.divide_stim = val
+
     def __getitem__(self, idx):
 
         if len(self.cells_out) == 0:
@@ -168,6 +176,10 @@ class binocular_single(SensoryBase):
                     'stim': self.stim[idx, :], 
                     'robs': robs_tmp[idx, :],
                     'dfs': dfs_tmp[idx, :]}
+            
+        if self.divide_stim:
+            out['stimL'] = self.stimL[idx, :]
+            out['stimR'] = self.stimR[idx, :]
 
         if self.Xdrift is not None:
             out['Xdrift'] = self.Xdrift[idx, :]

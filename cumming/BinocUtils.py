@@ -392,15 +392,16 @@ def binocular_model_performance( data=None, cell_n=None, Rpred=None, valset=None
         v_inds = data.val_inds
     elif valset in ['a', 'A']:
         v_inds = data.val_indsA
+        #print( '  Using val set A')
     else:
         v_inds = data.val_indsB
+        #print( '  Using val set B')
 
     #indxs3xv = np.intersect1d( data.val_inds, indxs3 )
     #indxs1xv = np.intersect1d( data.val_inds, indxs1 )
     rep1inds = np.intersect1d(v_inds, data.rep_inds[cell_n][:,0])
     rep2inds = np.intersect1d(v_inds, data.rep_inds[cell_n][:,1])
     allreps = np.concatenate((rep1inds, rep2inds), axis=0)
-    print('len reps', len(allreps))
 
     indxs3xv = np.intersect1d( allreps, indxs3 )
     indxs1xv = np.intersect1d( allreps, indxs1 )
@@ -454,4 +455,111 @@ def binocular_model_performance( data=None, cell_n=None, Rpred=None, valset=None
            'Dtun_obs': Dtun_obs, 'Dtun_pred': Dtun_pred, 'DtuningR2': DtuningR2}
     
     return BMP
+
+
+## Binocular model utilities
+def compute_Mfilters( tkerns=None, filts=None, mod=None, to_plot=True, to_output=False):
+    """Compute a spatiotemporal filter from temporal kernels convolved with second-layer filter"""
+    if mod is not None:
+        tkerns = mod.get_weights(layer_target=0)
+        filts = mod.get_weights(layer_target=1)
+    else:
+        assert filts is not None, "Cant have everything be none"
+    ntks = tkerns.shape[1]
+    nfilts = filts.shape[-1]
+    if len(filts.shape) == 2:
+        filts=filts.reshape([ntks,-1, nfilts])
+    else:
+        assert filts.shape[0] == ntks, "Issue with filter shapes"
+    Mfilts = np.einsum('tb,bxl->xtl', tkerns, filts)
+    if to_plot:
+        nrows = (nfilts-1)//8 + 1
+        ncols = np.minimum(nfilts, 8)
+        DU.ss(nrows, ncols, rh=1.5)
+        for ii in range(nfilts):
+            plt.subplot(nrows, ncols, ii+1)
+            imagesc(Mfilts[:,:, ii])
+        plt.show()
+    if to_output:
+        return Mfilts
+
+
+def compute_binocular_filters(binoc_mod, to_plot=True, cmap=None, time_reverse=True,
+                              num_space=None, ffnet_n=None, mfilters=None ):
+    """using standard binocular model, compute filters. defaults to first ffnet and
+    num_space = 36. Set num_space=None to go to minimum given convolutional constraints"""
+
+    # Find binocular layer within desired (or whole) model
+    from NDNT.modules.layers import BiConvLayer1D, ChannelConvLayer
+
+    if ffnet_n is not None:
+        networks_to_search = [ffnet_n]
+    else:
+        networks_to_search = range(len(binoc_mod.networks))        
+    blayer, bnet = None, None
+    for mm in networks_to_search:
+        for nn in range(len(binoc_mod.networks[mm].layers)):
+            if isinstance(binoc_mod.networks[mm].layers[nn], BiConvLayer1D): # this is layer output to bi-layer
+                if nn < len(binoc_mod.networks[mm].layers) - 1:
+                    bnet, blayer = mm, nn + 1
+                elif mm < len(binoc_mod.networks) - 1:
+                    bnet, blayer = mm + 1, 0  # split in hierarchical network
+    assert blayer is not None, 'biconv layer not found'
+
+    if mfilters is None:
+        if (bnet == 0) & (blayer == 1): # then mfilters are just first layer
+            mfilters = binoc_mod.get_weights(time_reverse=time_reverse)
+        else:  # construct using tkerns
+            mfilters = compute_Mfilters(mod=binoc_mod, to_output=True, to_plot=False) 
+            if time_reverse:
+                print('Warning: time_reverse not implemented in this case.')
+    NXM, num_lags, NF = mfilters.shape
+    #print(NXM, num_lags, NF)
+    ws = binoc_mod.get_weights(ffnet_target=bnet, layer_target=blayer)
+    NF2, NXC, NBF = ws.shape 
+    num_cspace = NXM+NXC-1
+
+    eye_filts = np.zeros([num_cspace, num_lags, 2, NBF])
+
+    if isinstance(binoc_mod.networks[bnet].layers[blayer], ChannelConvLayer):
+        #print('Input filters:', NXM, NF)
+        #print(NF2, 'weights per binocular filter, LRLR ->', NF2//2, 'monocular filters involved')
+        #print(NXM,NXC,num_cspace)
+        assert (NF2//2)*NBF == NF, "ChannelConv monocular filter mismatch"
+        for ff in range(NBF):
+            frange = (NF2//2)*ff + np.arange(NF2//2) 
+            for xx in range(NXC):
+                for eye in range(2):
+                    eye_filts[np.arange(NXM)+xx, :, eye, ff] += np.einsum(
+                        'xtm,m->xt', mfilters[:, :, frange], ws[np.arange(eye,NF2,2), xx, ff] )
+                        #'xtm,mf->xtf', mfilters, ws[np.arange(NF)+eye*NF, xx, :] ) # not correct
+                    #eye_filts[np.arange(NXM)+xx, :, eye, ff] += mfilters[:, :, frange+eye] @ ws[np.arange(eye,NF2,2), xx, ff][:,None,None]
+    else: # Standard
+        assert NF2 == 2*NF, "Monocular filter number mismatch"
+        for xx in range(NXC):
+            for eye in range(2):
+                eye_filts[np.arange(NXM)+xx, :, eye, :] += np.einsum(
+                    'xtm,mf->xtf', mfilters, ws[np.arange(eye,NF2,2), xx, :] )
+                    #'xtm,mf->xtf', mfilters, ws[np.arange(NF)+eye*NF, xx, :] )
+    if num_space is None:
+        # Cast into desired num_space
+        num_space = num_cspace
+    if num_space == num_cspace:
+        Bfilts = eye_filts
+    elif num_space > num_cspace:
+        Bfilts = np.zeros([num_space, num_lags, 2, NBF])
+        padding = (num_space-num_cspace) // 2
+        Bfilts[padding+np.arange(num_cspace), :, :, :] = eye_filts
+    else:  # crop
+        unpadding = (num_cspace-num_space) // 2
+        Bfilts = eye_filts[unpadding+np.arange(num_space), :, :, :]
+
+    bifilts = np.concatenate((Bfilts[:, :, 0, :], Bfilts[:, :, 1, :]), axis=0)
+    if to_plot:
+        from NDNT.utils import plot_filters_ST1D
+        plot_filters_ST1D( bifilts, num_cols=5, cmap=cmap, )
+    else:
+        return bifilts
+
+
 
