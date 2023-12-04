@@ -399,9 +399,12 @@ def binocular_model_performance( data=None, cell_n=None, Rpred=None, valset=None
 
     #indxs3xv = np.intersect1d( data.val_inds, indxs3 )
     #indxs1xv = np.intersect1d( data.val_inds, indxs1 )
-    rep1inds = np.intersect1d(v_inds, data.rep_inds[cell_n][:,0])
-    rep2inds = np.intersect1d(v_inds, data.rep_inds[cell_n][:,1])
-    allreps = np.concatenate((rep1inds, rep2inds), axis=0)
+    if data.rep_inds is None:
+        allreps = np.arange(data.NT)
+    else:
+        rep1inds = np.intersect1d(v_inds, data.rep_inds[cell_n][:,0])
+        rep2inds = np.intersect1d(v_inds, data.rep_inds[cell_n][:,1])
+        allreps = np.concatenate((rep1inds, rep2inds), axis=0)
 
     indxs3xv = np.intersect1d( allreps, indxs3 )
     indxs1xv = np.intersect1d( allreps, indxs1 )
