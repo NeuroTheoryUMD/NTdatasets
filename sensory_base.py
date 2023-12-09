@@ -141,7 +141,7 @@ class SensoryBase(Dataset):
                 else:
                     cell_list = list(cell_list)
             assert np.max(np.array(cell_list)) < self.NC, "ERROR: cell_list too high."
-            if verbose:
+            if verbose and len(cell_list)>1:
                 print("Output set to %d cells"%len(cell_list))
             self.cells_out = cell_list
             self.robs_out = deepcopy(self.robs[:, cell_list])

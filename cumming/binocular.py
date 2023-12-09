@@ -123,9 +123,7 @@ class binocular_single(SensoryBase):
         self.rep_inds = rep_inds
         print( "Expt %d: %d SUs, %d total units, %d out of %d time points used."%(expt_num, self.numSUs, self.NC, len(used_inds), self.NT))
 
-        # If number of lags entered, then prepare stimulus
-        if time_embed > 0:
-            self.prepare_stim( time_embed=time_embed, skip_lags=skip_lags, num_lags=num_lags)
+        self.prepare_stim( time_embed=time_embed, skip_lags=skip_lags, num_lags=num_lags)
     # END binocular_single.__init__
 
     def prepare_stim( self, time_embed=0, skip_lags=None, num_lags=None ):
@@ -143,13 +141,14 @@ class binocular_single(SensoryBase):
         self.stim_dims = deepcopy(self.dims)
         if time_embed == 0:
             self.stim = torch.tensor( self.Bstim, dtype=torch.float32 )
+            self.stim_dims = deepcopy(self.dims)
         else:
             if num_lags is None:
                 # then read from dataset (already set):
                 num_lags = self.num_lags
-        self.stim = self.time_embedding( stim=stim, nlags=num_lags )
-        # This will return a torch-tensor
-        self.stim_dims[3] = num_lags
+            self.stim = self.time_embedding( stim=stim, nlags=num_lags )
+            # This will return a torch-tensor
+            self.stim_dims[3] = num_lags
     # END binocular_single.prepare_stim()
 
     def separate_eyes(self, val=True):

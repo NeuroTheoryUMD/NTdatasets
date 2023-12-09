@@ -4,6 +4,7 @@ import NDNT.utils as utils
 import NDNT.NDNT as NDN
 from time import time
 from copy import deepcopy
+import matplotlib.pyplot as plt
 
 
 def varDF( s, df=None, mean_adj=True ):
@@ -200,7 +201,6 @@ def disparity_tuning( data, r, cell_n=None, num_dlags=8, fr1or3=3, to_plot=False
             'best_lag': best_lag, 'uncor_sta': Usta, 'disp_list': data.disp_list[2:]}
 
     if to_plot:
-        import matplotlib.pyplot as plt
         utils.subplot_setup(1,2, fig_width=10, row_height=2.8)
         plt.subplot(1,2,1)
         utils.imagesc(Dsta-uncor_resp, cmap='bwr')
@@ -493,7 +493,7 @@ def compute_binocular_filters(binoc_mod, to_plot=True, cmap=None, time_reverse=T
     num_space = 36. Set num_space=None to go to minimum given convolutional constraints"""
 
     # Find binocular layer within desired (or whole) model
-    from NDNT.modules.layers import BiConvLayer1D, ChannelConvLayer
+    from NDNT.modules.layers import BiConvLayer1D, BiSTconv1D #, ChannelConvLayer
 
     if ffnet_n is not None:
         networks_to_search = [ffnet_n]
@@ -502,7 +502,7 @@ def compute_binocular_filters(binoc_mod, to_plot=True, cmap=None, time_reverse=T
     blayer, bnet = None, None
     for mm in networks_to_search:
         for nn in range(len(binoc_mod.networks[mm].layers)):
-            if isinstance(binoc_mod.networks[mm].layers[nn], BiConvLayer1D): # this is layer output to bi-layer
+            if isinstance(binoc_mod.networks[mm].layers[nn], BiConvLayer1D) or isinstance(binoc_mod.networks[mm].layers[nn], BiSTconv1D): # this is layer output to bi-layer
                 if nn < len(binoc_mod.networks[mm].layers) - 1:
                     bnet, blayer = mm, nn + 1
                 elif mm < len(binoc_mod.networks) - 1:
@@ -524,26 +524,25 @@ def compute_binocular_filters(binoc_mod, to_plot=True, cmap=None, time_reverse=T
 
     eye_filts = np.zeros([num_cspace, num_lags, 2, NBF])
 
-    if isinstance(binoc_mod.networks[bnet].layers[blayer], ChannelConvLayer):
+    #if isinstance(binoc_mod.networks[bnet].layers[blayer], ChannelConvLayer):
         #print('Input filters:', NXM, NF)
         #print(NF2, 'weights per binocular filter, LRLR ->', NF2//2, 'monocular filters involved')
         #print(NXM,NXC,num_cspace)
-        assert (NF2//2)*NBF == NF, "ChannelConv monocular filter mismatch"
-        for ff in range(NBF):
-            frange = (NF2//2)*ff + np.arange(NF2//2) 
-            for xx in range(NXC):
-                for eye in range(2):
-                    eye_filts[np.arange(NXM)+xx, :, eye, ff] += np.einsum(
-                        'xtm,m->xt', mfilters[:, :, frange], ws[np.arange(eye,NF2,2), xx, ff] )
-                        #'xtm,mf->xtf', mfilters, ws[np.arange(NF)+eye*NF, xx, :] ) # not correct
+    #    assert (NF2//2)*NBF == NF, "ChannelConv monocular filter mismatch"
+    #    for ff in range(NBF):
+    #        frange = (NF2//2)*ff + np.arange(NF2//2) 
+    #        for xx in range(NXC):
+    #            for eye in range(2):
+    #                eye_filts[np.arange(NXM)+xx, :, eye, ff] += np.einsum(
+    #                    'xtm,m->xt', mfilters[:, :, frange], ws[np.arange(eye,NF2,2), xx, ff] )
                     #eye_filts[np.arange(NXM)+xx, :, eye, ff] += mfilters[:, :, frange+eye] @ ws[np.arange(eye,NF2,2), xx, ff][:,None,None]
-    else: # Standard
-        assert NF2 == 2*NF, "Monocular filter number mismatch"
-        for xx in range(NXC):
-            for eye in range(2):
-                eye_filts[np.arange(NXM)+xx, :, eye, :] += np.einsum(
-                    'xtm,mf->xtf', mfilters, ws[np.arange(eye,NF2,2), xx, :] )
-                    #'xtm,mf->xtf', mfilters, ws[np.arange(NF)+eye*NF, xx, :] )
+    #else: # Standard
+    assert NF2 == 2*NF, "Monocular filter number mismatch"
+    for xx in range(NXC):
+        for eye in range(2):
+            eye_filts[np.arange(NXM)+xx, :, eye, :] += np.einsum(
+                'xtm,mf->xtf', mfilters, ws[np.arange(eye,NF2,2), xx, :] )
+                #'xtm,mf->xtf', mfilters, ws[np.arange(NF)+eye*NF, xx, :] )
     if num_space is None:
         # Cast into desired num_space
         num_space = num_cspace
@@ -560,9 +559,22 @@ def compute_binocular_filters(binoc_mod, to_plot=True, cmap=None, time_reverse=T
     bifilts = np.concatenate((Bfilts[:, :, 0, :], Bfilts[:, :, 1, :]), axis=0)
     if to_plot:
         from NDNT.utils import plot_filters_ST1D
+        if isinstance(binoc_mod.networks[bnet].layers[blayer-1], BiSTconv1D):
+            bifilts = np.flip(bifilts, axis=1)  # Then time-reverse 
         plot_filters_ST1D( bifilts, num_cols=5, cmap=cmap, )
     else:
         return bifilts
 
 
+def plot_sico_readout( sico ):
+    from NDNT.utils import imagesc
+    w = sico.networks[0].layers[-1].get_weights().squeeze().T
+    NF = w.shape[1]
+    NI = sico.networks[0].layers[-2].num_inh
+    NE = NF-NI
+    w[:, NE:] *= -1
+
+    utils.subplot_setup(1,1,fig_width=6, row_height=0.15*NF)
+    imagesc(w, cmap='bwr')
+    plt.show()
 
