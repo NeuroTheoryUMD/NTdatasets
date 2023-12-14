@@ -401,7 +401,7 @@ class MultiClouds(SensoryBase):
 
             tslice = np.array(self.fhandles[ff]['Robs'], dtype=np.int64)[self.tranges[ff], :]
             R_tslice[:, ccount+np.arange(len(su_list))] = deepcopy(tslice[:, su_list])
-            tslice = np.array(self.fhandles[ff]['datafilts'], dtype=np.uint8)[self.tranges[ff], :]
+            tslice = np.array(self.fhandles[ff]['datafilts'], dtype=np.uint8)[self.tranges[ff], :] 
             df_tslice[:, ccount+np.arange(len(su_list))] = deepcopy(tslice[:, su_list])
             ccount += len(su_list)
 
@@ -426,6 +426,7 @@ class MultiClouds(SensoryBase):
 
             tcount += NTexpt
 
+        self.trialfilter_dfs()
     # END MultiClouds.assemble_robs()
 
     def list_expts( self ):
@@ -460,7 +461,17 @@ class MultiClouds(SensoryBase):
             if elim_cells > 0:
                 print('  reduce_cells not implemented yet')
                 print( ' Cells to reduce:', elim_cells )
+        
+        self.trialfilter_dfs()
     # END MultiClouds.updateDF()
+
+    def trialfilter_dfs( self ):
+        """Zeros out dfs at the beginning of trials up to num_lags"""
+        if self.num_lags > 0:
+            for bb in range(len(self.block_inds)):
+                self.dfs[self.block_inds[bb][0] + np.arange(self.num_lags), :] = 0
+                if bb == 0:
+                    print(self.block_inds[bb][0] + np.arange(self.num_lags))
 
     def assemble_saccade_inds( self ):
         print('Currently not implemented -- needs to have microsaccades labeled well with time first')
