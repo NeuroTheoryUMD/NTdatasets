@@ -470,8 +470,6 @@ class MultiClouds(SensoryBase):
         if self.num_lags > 0:
             for bb in range(len(self.block_inds)):
                 self.dfs[self.block_inds[bb][0] + np.arange(self.num_lags), :] = 0
-                if bb == 0:
-                    print(self.block_inds[bb][0] + np.arange(self.num_lags))
 
     def assemble_saccade_inds( self ):
         print('Currently not implemented -- needs to have microsaccades labeled well with time first')
