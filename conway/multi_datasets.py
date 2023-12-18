@@ -115,6 +115,7 @@ class MultiClouds(SensoryBase):
         self.fileNT = np.zeros(self.Nexpts, dtype=np.int64)
         self.fileNBLK = np.zeros(self.Nexpts, dtype=np.int64)
         self.fileNC = np.zeros(self.Nexpts, dtype=np.int64)
+        self.fileNA = np.zeros(self.Nexpts, dtype=np.int64) # for the drift term
         self.file_tstart = np.zeros(self.Nexpts, dtype=np.int64)
         self.file_blkstart = np.zeros(self.Nexpts, dtype=np.int64)
 
@@ -195,6 +196,7 @@ class MultiClouds(SensoryBase):
                     anchors[bb] = self.block_inds[self.drift_interval*bb][0]
                 #self.Xdrift = utils.design_matrix_drift( self.NT, anchors, zero_left=False, const_right=True)
                 Xdrift_expts.append(self.design_matrix_drift( self.fileNT[ff], anchors, zero_left=False, const_right=True))
+                self.fileNA[ff] = Nanchors # store the number of anchors for each file
                 Nanchors_tot += Nanchors
 
             # Assemble whole drift matrix
