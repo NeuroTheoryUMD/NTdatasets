@@ -478,10 +478,10 @@ def compute_Mfilters( tkerns=None, filts=None, mod=None, to_plot=True, to_output
     if to_plot:
         nrows = (nfilts-1)//8 + 1
         ncols = np.minimum(nfilts, 8)
-        DU.ss(nrows, ncols, rh=1.5)
+        utils.ss(nrows, ncols, rh=1.5)
         for ii in range(nfilts):
             plt.subplot(nrows, ncols, ii+1)
-            imagesc(Mfilts[:,:, ii])
+            utils.imagesc(Mfilts[:,:, ii])
         plt.show()
     if to_output:
         return Mfilts
