@@ -321,7 +321,7 @@ def disparity_predictions(
     return dpred, tpred
 
 
-def binocular_model_performance( data=None, cell_n=None, Rpred=None, valset=None ):
+def binocular_model_performance( data=None, cell_n=None, Rpred=None, valset=None, verbose=True ):
     """Current best-practices for generating prediction quality of neuron and binocular tuning. Currently we
     are not worried about using cross-validation indices only (as they are based on much less data and tend to
     otherwise be in agreement with full measures, but this option could be added in later versions.
@@ -357,7 +357,8 @@ def binocular_model_performance( data=None, cell_n=None, Rpred=None, valset=None
     else:
         ev_valid = True
 
-    print( "  Overall explainable variance fraction: %0.3f"%(ev/tv) )
+    if verbose:
+        print( "  Overall explainable variance fraction: %0.3f"%(ev/tv) )
 
     #### Model and data properties (not performance yet)
     indxs3 = np.where(data.frs == 3)[0]
@@ -373,7 +374,8 @@ def binocular_model_performance( data=None, cell_n=None, Rpred=None, valset=None
     dv_pred3 = varDF(dmod3[indxs3]-tmod3[indxs3], df=df[indxs3])
     dv_pred1 = varDF(dmod1[indxs1]-tmod1[indxs1], df=df[indxs1])
     
-    print( "  Obs disparity variance fraction (DVF): %0.3f (FR3: %0.3f)"%(dv_obs/ev, dv_obs3/ev3) )
+    if verbose:
+        print( "  Obs disparity variance fraction (DVF): %0.3f (FR3: %0.3f)"%(dv_obs/ev, dv_obs3/ev3) )
     vars_obs = [tv, ev, dv_obs, ev-dv_obs ]  # total, explainable, disp_var, pattern_var
     vars_obs_FR3 = [tv3, ev3, dv_obs3, ev3-dv_obs3 ]  # total, explainable, disp_var, pattern_var
     DVfrac_obs = [dv_obs/ev, dv_obs3/ev3, dv_obs1/ev1 ]
@@ -414,10 +416,10 @@ def binocular_model_performance( data=None, cell_n=None, Rpred=None, valset=None
     #                  dv_pred1b/np.var(Rpred[indxs1])]
     
     # Predictive powers (model performance): full response, fr3, fr1
-    pps = [predictive_power( Rpred, data, cell_n=cell_n ),  # predict variance of full response
+    pps = [predictive_power( Rpred, data, cell_n=cell_n, inds=allreps ),  # predict variance of full response
            predictive_power( Rpred, data, cell_n=cell_n, inds=indxs3xv ),
            predictive_power( Rpred, data, cell_n=cell_n, inds=indxs1xv )]
-   
+
     Dpps = np.zeros(3)
     #Dpps[0] = 1-varDF(dobs0[data.val_inds]-dmod0[data.val_inds], df=df[data.val_inds]) / \
     #    varDF(dobs0[data.val_inds], df=df[data.val_inds])
@@ -439,7 +441,8 @@ def binocular_model_performance( data=None, cell_n=None, Rpred=None, valset=None
     Dpps[2] = 1-varDF(dobs_only1[indxs1xv]-dmod_only1[indxs1xv], df=df[indxs1xv], mean_adj=False) / \
         varDF(dobs_only1[indxs1xv], df=df[indxs1xv])
 
-    print( "  Pred powers: %0.3f  disp %0.3f (FR3 %0.3f, FR1 %0.3f)"%(pps[0], Dpps[0], Dpps[1], Dpps[2]))
+    if verbose:
+        print( "  Pred powers: %0.3f  disp %0.3f (FR3 %0.3f, FR1 %0.3f)"%(pps[0], Dpps[0], Dpps[1], Dpps[2]))
 
     # Add general tuning of each
     Dtun_obs = [disparity_tuning( data, data.robs[:, cell_n], cell_n=cell_n, fr1or3=3 ),
@@ -449,7 +452,8 @@ def binocular_model_performance( data=None, cell_n=None, Rpred=None, valset=None
     # Tuning curve consistency
     DtuningR2 = [1-np.mean(np.square(Dtun_obs[0]['Dtun']-Dtun_pred[0]['Dtun']))/np.var(Dtun_obs[0]['Dtun']),
                  1-np.mean(np.square(Dtun_obs[1]['Dtun']-Dtun_pred[1]['Dtun']))/np.var(Dtun_obs[1]['Dtun'])]
-    print( "  Tuning consistency R2s: FR3 %0.3f  FR1 %0.3f"%(DtuningR2[0], DtuningR2[1]))
+    if verbose:
+        print( "  Tuning consistency R2s: FR3 %0.3f  FR1 %0.3f"%(DtuningR2[0], DtuningR2[1]))
 
     BMP = {'EVfrac': ev/tv, 'EVvalid': ev_valid, 
            'vars_obs': vars_obs, 'vars_mod': vars_mod, 'vars_obs_FR3': vars_obs_FR3,
