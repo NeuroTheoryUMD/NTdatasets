@@ -25,7 +25,7 @@ def varDF( s, df=None, mean_adj=True ):
     return np.sum(np.square(s-sbar)*df)/nrm
      
 
-def explainable_variance( Edata, cell_n, fr1or3=None, inds=None, suppress_warnings=False ):
+def explainable_variance( Edata, cell_n, fr1or3=None, inds=None, verbose=True ):
     """Explainable variance calculation: binocular-specific because of the data structures
     Inputs:
         Edata: binocular dataset (one experiment with a certain number of cells recorded)
@@ -51,7 +51,7 @@ def explainable_variance( Edata, cell_n, fr1or3=None, inds=None, suppress_warnin
         inds = np.intersect1d(inds, np.where(Edata.frs == fr1or3)[0])
 
     if Edata.rep_inds is None:
-        if ~suppress_warnings:
+        if verbose:
             print( 'No repeats in this dataset -- using total variance.')
         return np.var(resp[inds]), np.var(resp[inds])
             
@@ -65,7 +65,7 @@ def explainable_variance( Edata, cell_n, fr1or3=None, inds=None, suppress_warnin
     return explvar, totvar
 
 
-def predictive_power( pred, Edata, cell_n, inds=None, suppress_warnings=False ):
+def predictive_power( pred, Edata, cell_n, inds=None, verbose=True ):
     """Predictive power calculation (R2 adjusted by dividing by explainable (rather than total) variance
     (binocular-specific because of the data structures)
     Inputs:
@@ -104,7 +104,7 @@ def predictive_power( pred, Edata, cell_n, inds=None, suppress_warnings=False ):
         r2 = pred[mod_indxs]
 
     # Now assuming that r (Robs) is length of indxs, and pred is full res
-    expl_var,_ = explainable_variance( Edata, cell_n, inds=mod_indxs, suppress_warnings=suppress_warnings )
+    expl_var,_ = explainable_variance( Edata, cell_n, inds=mod_indxs, verbose=verbose )
 
     # explained_power = np.var(r1)-np.mean(np.square(r1-r2))  # WOW I THINK THIS IS WRONG -- WAS ORIGINAL FORMULA
     explained_power = expl_var -np.mean(np.multiply(r1a-r2, r1b-r2))
@@ -348,9 +348,9 @@ def binocular_model_performance( data=None, cell_n=None, Rpred=None, valset=None
     dmod1, tmod1 = disparity_predictions( data, resp=Rpred, cell_n=cell_n, fr1or3=1, spiking=True, rectified=True )
 
     # This necessarily takes data-filters into account, but not cross-validation inds
-    ev, tv = explainable_variance( data, cell_n=cell_n )
-    ev3, tv3 = explainable_variance( data, cell_n=cell_n, fr1or3=3 )
-    ev1, tv1 = explainable_variance( data, cell_n=cell_n, fr1or3=1 )
+    ev, tv = explainable_variance( data, cell_n=cell_n, verbose=verbose )
+    ev3, tv3 = explainable_variance( data, cell_n=cell_n, fr1or3=3, verbose=verbose )
+    ev1, tv1 = explainable_variance( data, cell_n=cell_n, fr1or3=1, verbose=verbose )
     
     if ev == tv:
         ev_valid = False
