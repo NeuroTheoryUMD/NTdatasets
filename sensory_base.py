@@ -211,7 +211,7 @@ class SensoryBase(Dataset):
             dtype=torch.float32)
     # END SenspryBase.construct_drift_design_matrix()
 
-    def trial_psths( self, trials=None, R=None ):
+    def trial_psths( self, trials=None, R=None, trial_size=None, verbose=False ):
         """Computes average firing rate of cells_out at bin-resolution, averaged across trials
         given in block_inds"""
 
@@ -222,7 +222,12 @@ class SensoryBase(Dataset):
             ccs = self.cells_out
         else:
             ccs = np.arange(self.NC)
-        dfs = self.dfs[:, ccs].detach().numpy()
+        if R.shape[1] == len(ccs):
+            dfs = self.dfs[:, ccs].detach().numpy()
+        else:
+            if verbose:
+                print('  Ignoring dfs.')
+            dfs = np.ones([self.dfs.shape[0], R.shape[1]])
 
         if R is None:  #then use [internal] Robs
             R = deepcopy( self.robs[:, ccs].detach().numpy() )  
@@ -230,21 +235,30 @@ class SensoryBase(Dataset):
             R = R[:, None]         
         num_psths = R.shape[1]  # otherwise use existing input
 
-        # Compute minimum trial size
-        T = len(self.block_inds[0])
-        for bb in range(1, Ntr):
-            if len(self.block_inds[bb]) > T:
-                T = len(self.block_inds[bb])
-        psths = np.zeros([T, num_psths])
-        df_count = np.zeros([T, num_psths])
+        # Compute median trial size
+        if trial_size is None:
+            # select median trial size, but look at all
+            tr_sizes = np.zeros(len(self.block_inds))
+            for bb in range(Ntr):
+                tr_sizes[bb] = len(self.block_inds[bb])
+            T = int(np.median(tr_sizes))
+            if verbose:
+                print("  Trial lengths: Min %d, Max %d, Median %d. Selecting median."%(np.min(tr_sizes), np.max(tr_sizes), T))
 
         if trials is None:
             trials = np.arange(Ntr)
 
+        psths = np.zeros([T, num_psths])
+        df_count = np.zeros([T, num_psths])
+
         if len(trials) > 0:
             for ii in trials:
-                psths += R[self.block_inds[ii][:T], :] * dfs[self.block_inds[ii][:T], :]
-                df_count += dfs[self.block_inds[ii][:T], :]
+                if len(self.block_inds[ii]) < T:
+                    trT = len(self.block_inds[ii])
+                else: 
+                    trT = T
+                psths[:trT, :] += R[self.block_inds[ii][:trT], :] * dfs[self.block_inds[ii][:trT], :]
+                df_count[:trT, :] += dfs[self.block_inds[ii][:trT], :]
             
             psths = np.divide( psths, np.maximum(df_count, 1.0) )
 

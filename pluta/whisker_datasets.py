@@ -36,6 +36,8 @@ class WhiskerData(SensoryBase):
         behavior = ExptMat[:, range(22,26)]
         self.run_speed = ExptMat[:, 21]
         self.licks = ExptMat[:, 26]
+        self.include_multitouches = False
+        self.mtouches = None
 
         # Make trial-blocks and throw in used_inds
         self.used_inds = np.ones(NT)
@@ -72,9 +74,18 @@ class WhiskerData(SensoryBase):
         self.val_inds = Xi
 
         ##### Additional Stim processing #####
+        # Coincident touches
+        multitouches = np.zeros([NT, 4])
+        for ipsi in range(2):  # AC, AD, BC, BD (all cross-side pairings)
+            multitouches[:,2*ipsi] = self.touchfull[:, 0] * self.touchfull[:, 2+ipsi]
+            multitouches[:,1+2*ipsi] = self.touchfull[:, 1] * self.touchfull[:, 2+ipsi]
+
+        # Extract onset for both single and multitouches
         self.touches = np.zeros([NT, 4])
+        self.multitouches = np.zeros([NT, 4])
         for ww in range(4):
             self.touches[np.where(np.diff(self.touchfull[:, ww]) > 0)[0]+1, ww] = 1
+            self.multitouches[np.where(np.diff(multitouches[:, ww]) > 0)[0]+1, ww] = 1
 
         self.TRpistons, self.TRoutcomes = self.trial_classify(TRinds, pistons, behavior)
         self.TRhit = np.where(self.TRoutcomes == 1)[0]
@@ -97,8 +108,9 @@ class WhiskerData(SensoryBase):
         #self.prepare_stim()
     # END WhiskerData.__init__()
 
-    def prepare_stim( self, stim_config=0, num_lags=None ):
+    def prepare_stim( self, stim_config=0, num_lags=None, temporal_basis=None, include_multitouches=False ):
 
+        self.include_multitouches = include_multitouches
         #self.stim = torch.tensor( self.touches, dtype=torch.float32, device=device )
         if num_lags is None:
             num_lags = self.num_lags
@@ -114,7 +126,36 @@ class WhiskerData(SensoryBase):
             self.stim_dims = [4, 1, 1, 1]
             self.stim = self.time_embedding( stim=self.touches, nlags=num_lags )
             self.stimA = None
-        self.stim_dims[3] = num_lags
+
+        if include_multitouches:
+            self.mtouches = self.time_embedding( stim=self.multitouches, nlags=num_lags )
+
+        if temporal_basis is not None:
+            # then temporal basis gives the doubling time
+            self.stim_anchors = self.anchor_set(num_lags, temporal_basis)
+            self.TB = torch.tensor(self.temporal_basis(num_lags, self.stim_anchors), dtype=torch.float32)
+        else:
+            self.TB = None
+
+        # Process with temporal basis, if relevant
+        if self.TB is not None:
+            self.stim = torch.einsum(
+                'bxt,tf->bxf', 
+                self.stim.reshape([self.NT, self.stim_dims[0], -1]), 
+                self.TB ).reshape([self.NT, -1])
+            if self.stimA is not None:
+                self.stimA = torch.einsum(
+                    'bxt,tf->bxf', 
+                    self.stimA.reshape([self.NT, self.stim_dims[0], -1]), 
+                    self.TB).reshape([self.NT, -1])
+            if include_multitouches is not None:
+                self.mtouches = torch.einsum(
+                    'bxt,tf->bxf', 
+                    torch.tensor(self.multitouches.reshape([self.NT, 4, -1]), dtype=torch.float32), 
+                    self.TB).reshape([self.NT, -1])
+            self.stim_dims[3] = self.TB.shape[1]
+        else:
+            self.stim_dims[3] = num_lags
     # END WhiskerData.prepare_stim()
 
     def set_hemispheres( self, out_config=0, in_config=0 ):
@@ -193,6 +234,9 @@ class WhiskerData(SensoryBase):
         if self.Xdrift is not None:
             out['Xdrift'] = self.Xdrift[idx, :]
 
+        if self.include_multitouches:
+            out['mtouches'] = self.mtouches[idx, :]
+
         if self.ACinput is not None:
             out['ACinput'] = self.ACinput[idx, :]
 
@@ -202,6 +246,43 @@ class WhiskerData(SensoryBase):
         return out
     # END WhiskerData.__getitem()
 
+    # Make temporal basis possible
+    def temporal_basis( self, nlags, anchors ):
+        if anchors[-1] < nlags:
+            anchors.append(nlags)
+        anchors = np.array(anchors, dtype=np.int64)-1
+        num_tk=len(anchors)-1
+        KB = np.zeros([nlags, num_tk])
+        KB[anchors[0]+1,0]=1
+        for ii in range(1,num_tk):
+            if anchors[ii]-anchors[ii-1] > 1:  # then need to slope
+                dx = anchors[ii]-anchors[ii-1]
+                KB[np.arange(anchors[ii-1]+1, anchors[ii]+1)+1, ii] = (np.arange(dx)+1)/dx
+            else:
+                KB[anchors[ii]+1,ii] = 1 
+            if anchors[ii+1]-anchors[ii] > 1:  # then need to slope
+                dx = anchors[ii+1]-anchors[ii]
+                KB[np.arange(anchors[ii], anchors[ii+1])+1, ii] = 1-(np.arange(dx))/dx
+        print(num_tk, 'basis elements')
+        return KB
+
+    def anchor_set( self, nlags, doubling_time, offset=0 ):
+        sp = 1
+        a = []
+        x = offset
+        while x < nlags:
+            for ii in range(doubling_time):
+                x += sp
+                if x < nlags:
+                    a.append(x)
+            sp *= 2
+        if a[-1] >= nlags-2:
+            a[-1] = nlags
+        else:
+            a.append(nlags)
+        return a
+    
+    # Autoencoders
     def autoencoder_design_matrix( self, pre_win=0, post_win=0, blank=0, cells=None ):
         """Makes auto-encoder input using windows described above, and including the
         chosen cells. Will put as additional covariate "ACinput" in __get_item__
@@ -345,7 +426,7 @@ class WhiskerData(SensoryBase):
         # Reclassify unilateral (or no) touch trials as Rew = 5
         unilateral = np.where((TRpistons <=2) | (TRpistons == 4) | (TRpistons==8))[0]
         TRoutcomes[unilateral] = 5
-        print(TRpistons)
+        
         return(TRpistons, TRoutcomes)
 
     @staticmethod
