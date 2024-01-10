@@ -25,7 +25,7 @@ def varDF( s, df=None, mean_adj=True ):
     return np.sum(np.square(s-sbar)*df)/nrm
      
 
-def explainable_variance( Edata, cell_n, fr1or3=None, inds=None, suppress_warnings=False ):
+def explainable_variance( Edata, cell_n, fr1or3=None, inds=None, verbose=True ):
     """Explainable variance calculation: binocular-specific because of the data structures
     Inputs:
         Edata: binocular dataset (one experiment with a certain number of cells recorded)
@@ -51,7 +51,7 @@ def explainable_variance( Edata, cell_n, fr1or3=None, inds=None, suppress_warnin
         inds = np.intersect1d(inds, np.where(Edata.frs == fr1or3)[0])
 
     if Edata.rep_inds is None:
-        if ~suppress_warnings:
+        if verbose:
             print( 'No repeats in this dataset -- using total variance.')
         return np.var(resp[inds]), np.var(resp[inds])
             
@@ -65,7 +65,7 @@ def explainable_variance( Edata, cell_n, fr1or3=None, inds=None, suppress_warnin
     return explvar, totvar
 
 
-def predictive_power( pred, Edata, cell_n, inds=None, suppress_warnings=False ):
+def predictive_power( pred, Edata, cell_n, inds=None, verbose=True ):
     """Predictive power calculation (R2 adjusted by dividing by explainable (rather than total) variance
     (binocular-specific because of the data structures)
     Inputs:
@@ -104,7 +104,7 @@ def predictive_power( pred, Edata, cell_n, inds=None, suppress_warnings=False ):
         r2 = pred[mod_indxs]
 
     # Now assuming that r (Robs) is length of indxs, and pred is full res
-    expl_var,_ = explainable_variance( Edata, cell_n, inds=mod_indxs, suppress_warnings=suppress_warnings )
+    expl_var,_ = explainable_variance( Edata, cell_n, inds=mod_indxs, verbose=verbose )
 
     # explained_power = np.var(r1)-np.mean(np.square(r1-r2))  # WOW I THINK THIS IS WRONG -- WAS ORIGINAL FORMULA
     explained_power = expl_var -np.mean(np.multiply(r1a-r2, r1b-r2))
@@ -321,7 +321,7 @@ def disparity_predictions(
     return dpred, tpred
 
 
-def binocular_model_performance( data=None, cell_n=None, Rpred=None, valset=None ):
+def binocular_model_performance( data=None, cell_n=None, Rpred=None, valset=None, verbose=True ):
     """Current best-practices for generating prediction quality of neuron and binocular tuning. Currently we
     are not worried about using cross-validation indices only (as they are based on much less data and tend to
     otherwise be in agreement with full measures, but this option could be added in later versions.
@@ -348,16 +348,17 @@ def binocular_model_performance( data=None, cell_n=None, Rpred=None, valset=None
     dmod1, tmod1 = disparity_predictions( data, resp=Rpred, cell_n=cell_n, fr1or3=1, spiking=True, rectified=True )
 
     # This necessarily takes data-filters into account, but not cross-validation inds
-    ev, tv = explainable_variance( data, cell_n=cell_n )
-    ev3, tv3 = explainable_variance( data, cell_n=cell_n, fr1or3=3 )
-    ev1, tv1 = explainable_variance( data, cell_n=cell_n, fr1or3=1 )
+    ev, tv = explainable_variance( data, cell_n=cell_n, verbose=verbose )
+    ev3, tv3 = explainable_variance( data, cell_n=cell_n, fr1or3=3, verbose=verbose )
+    ev1, tv1 = explainable_variance( data, cell_n=cell_n, fr1or3=1, verbose=verbose )
     
     if ev == tv:
         ev_valid = False
     else:
         ev_valid = True
 
-    print( "  Overall explainable variance fraction: %0.3f"%(ev/tv) )
+    if verbose:
+        print( "  Overall explainable variance fraction: %0.3f"%(ev/tv) )
 
     #### Model and data properties (not performance yet)
     indxs3 = np.where(data.frs == 3)[0]
@@ -373,7 +374,8 @@ def binocular_model_performance( data=None, cell_n=None, Rpred=None, valset=None
     dv_pred3 = varDF(dmod3[indxs3]-tmod3[indxs3], df=df[indxs3])
     dv_pred1 = varDF(dmod1[indxs1]-tmod1[indxs1], df=df[indxs1])
     
-    print( "  Obs disparity variance fraction (DVF): %0.3f (FR3: %0.3f)"%(dv_obs/ev, dv_obs3/ev3) )
+    if verbose:
+        print( "  Obs disparity variance fraction (DVF): %0.3f (FR3: %0.3f)"%(dv_obs/ev, dv_obs3/ev3) )
     vars_obs = [tv, ev, dv_obs, ev-dv_obs ]  # total, explainable, disp_var, pattern_var
     vars_obs_FR3 = [tv3, ev3, dv_obs3, ev3-dv_obs3 ]  # total, explainable, disp_var, pattern_var
     DVfrac_obs = [dv_obs/ev, dv_obs3/ev3, dv_obs1/ev1 ]
@@ -414,10 +416,10 @@ def binocular_model_performance( data=None, cell_n=None, Rpred=None, valset=None
     #                  dv_pred1b/np.var(Rpred[indxs1])]
     
     # Predictive powers (model performance): full response, fr3, fr1
-    pps = [predictive_power( Rpred, data, cell_n=cell_n ),  # predict variance of full response
+    pps = [predictive_power( Rpred, data, cell_n=cell_n, inds=allreps ),  # predict variance of full response
            predictive_power( Rpred, data, cell_n=cell_n, inds=indxs3xv ),
            predictive_power( Rpred, data, cell_n=cell_n, inds=indxs1xv )]
-   
+
     Dpps = np.zeros(3)
     #Dpps[0] = 1-varDF(dobs0[data.val_inds]-dmod0[data.val_inds], df=df[data.val_inds]) / \
     #    varDF(dobs0[data.val_inds], df=df[data.val_inds])
@@ -439,7 +441,8 @@ def binocular_model_performance( data=None, cell_n=None, Rpred=None, valset=None
     Dpps[2] = 1-varDF(dobs_only1[indxs1xv]-dmod_only1[indxs1xv], df=df[indxs1xv], mean_adj=False) / \
         varDF(dobs_only1[indxs1xv], df=df[indxs1xv])
 
-    print( "  Pred powers: %0.3f  disp %0.3f (FR3 %0.3f, FR1 %0.3f)"%(pps[0], Dpps[0], Dpps[1], Dpps[2]))
+    if verbose:
+        print( "  Pred powers: %0.3f  disp %0.3f (FR3 %0.3f, FR1 %0.3f)"%(pps[0], Dpps[0], Dpps[1], Dpps[2]))
 
     # Add general tuning of each
     Dtun_obs = [disparity_tuning( data, data.robs[:, cell_n], cell_n=cell_n, fr1or3=3 ),
@@ -449,7 +452,8 @@ def binocular_model_performance( data=None, cell_n=None, Rpred=None, valset=None
     # Tuning curve consistency
     DtuningR2 = [1-np.mean(np.square(Dtun_obs[0]['Dtun']-Dtun_pred[0]['Dtun']))/np.var(Dtun_obs[0]['Dtun']),
                  1-np.mean(np.square(Dtun_obs[1]['Dtun']-Dtun_pred[1]['Dtun']))/np.var(Dtun_obs[1]['Dtun'])]
-    print( "  Tuning consistency R2s: FR3 %0.3f  FR1 %0.3f"%(DtuningR2[0], DtuningR2[1]))
+    if verbose:
+        print( "  Tuning consistency R2s: FR3 %0.3f  FR1 %0.3f"%(DtuningR2[0], DtuningR2[1]))
 
     BMP = {'EVfrac': ev/tv, 'EVvalid': ev_valid, 
            'vars_obs': vars_obs, 'vars_mod': vars_mod, 'vars_obs_FR3': vars_obs_FR3,
@@ -478,10 +482,10 @@ def compute_Mfilters( tkerns=None, filts=None, mod=None, to_plot=True, to_output
     if to_plot:
         nrows = (nfilts-1)//8 + 1
         ncols = np.minimum(nfilts, 8)
-        DU.ss(nrows, ncols, rh=1.5)
+        utils.ss(nrows, ncols, rh=1.5)
         for ii in range(nfilts):
             plt.subplot(nrows, ncols, ii+1)
-            imagesc(Mfilts[:,:, ii])
+            utils.imagesc(Mfilts[:,:, ii])
         plt.show()
     if to_output:
         return Mfilts

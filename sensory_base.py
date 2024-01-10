@@ -68,6 +68,9 @@ class SensoryBase(Dataset):
         self.test_inds = None
         self.val_inds = None
         self.train_inds = None
+        self.test_blks = None
+        self.val_blks = None
+        self.train_blks = None
         self.used_inds = []
         self.speckled = False
         self.Mtrn, self.Mval = None, None  # Data-filter masks for speckled XV
@@ -468,6 +471,15 @@ class SensoryBase(Dataset):
             self.train_inds = tr_inds
             self.val_inds = val_inds
             self.test_inds = te_inds
+            
+        # make the inds and blks into numpy arrays
+        self.train_inds = np.array(self.train_inds)
+        self.val_inds = np.array(self.val_inds)
+        self.test_inds = np.array(self.test_inds)
+        self.train_blks = np.array(self.train_blks)
+        self.val_blks = np.array(self.val_blks)
+        self.test_blks = np.array(self.test_blks)
+        
     # END SensoryBase.crossval_setup
 
     def fold_sample( self, num_items, folds, random_gen=False, which_fold=None):
