@@ -316,6 +316,67 @@ class SensoryBase(Dataset):
         return XLV, LVdims  # numpy array
     # END SensoryBase.construct_LVtents()
     
+    def setup_trial_LVs( self ):
+        """
+        Usage: XLV = dataset.setup_trial_LVs()
+        
+        This makes design matrix as input for LVlayer (indexed LV for each trial) and outputs X, LVdims 
+        to actually figure out which LVs correspond to which trial, once it is done
+        """
+
+        num_trials = len(self.block_inds)
+
+        # LVs indexed 0-num_trials
+        X = np.zeros([self.NT, 1], dtype=np.float32)
+        for ii in range(num_trials):
+            X[self.block_inds[ii]] = ii
+
+        return X
+    # END SensoryBase.setup_trial_LVs()
+
+    def setup_LVLayer_input( self, tent_spacing=10, trsize=None ):
+        """
+        Usage: X, filter_dims = data.setup_LVLayer_input( tent_spacing=10, trsize=None)
+
+        Sets up tent-basis-input to LVLayer (part of NDNT code)
+        This preserves all data by using multiple effective trials for long trials. 
+        """
+        # Determine trial_size
+        Ntr = len(self.block_inds)
+        trsizes=[]
+        for ii in range(Ntr):
+            trsizes.append(len(self.block_inds[ii]))
+        if trsize is None:
+            L0 = np.median(trsizes)
+
+        X = np.ones([self.NT, 3])
+        ramp_down = 1.0-(np.arange(tent_spacing))/tent_spacing
+        NW0 = int(np.floor(L0/tent_spacing))+1  # how many LVs in standard trial
+        print( "Trial size = %d, %d LV indices per trial"%(L0, NW0) )
+
+        Ntr_eff = 0
+        LVindex_count = 0
+        for ii in range(Ntr):
+            ts = self.block_inds[ii]
+            L = len(ts)
+            NLVts = int(np.floor(L/tent_spacing)+1)  # this gets one on edge, given partials are pegged at 1
+            assigned_LVs_inds = np.arange(NLVts) + LVindex_count
+            
+            # Map these LVs 
+            X[ts, 0] = np.repeat(assigned_LVs_inds[:-1], tent_spacing)[:L]
+            X[ts, 1] = np.repeat(assigned_LVs_inds[1:], tent_spacing)[:L]
+            X[ts, 2] = np.tile(ramp_down, int(np.floor(L/tent_spacing)))[:L]  # this will leave the last bit ones
+            
+            # Need to do multiples of trial length so that smoothing works
+            num_trial_blocks = int(np.ceil(L/L0))
+            LVindex_count += num_trial_blocks * NW0
+            Ntr_eff += num_trial_blocks
+            
+        filter_dims = [Ntr_eff, NW0]
+        print("%d time points, %d LV indices"%(self.NT, LVindex_count))
+        return X, filter_dims
+        # END SensoryBase.setup_LVLayer_input()
+
     @staticmethod
     def design_matrix_drift( NT, anchors, zero_left=True, zero_right=False, const_left=False, const_right=False, to_plot=False):
         """Produce a design matrix based on continuous data (s) and anchor points for a tent_basis.
@@ -414,7 +475,6 @@ class SensoryBase(Dataset):
             print('Still need to implement avRs without preloading')
             return None
     # END .avrates()
-
 
     def crossval_setup(self, folds=5, random_gen=False, test_set=False, verbose=False):
         """This sets the cross-validation indices up We can add featuers here. Many ways to do this
@@ -531,6 +591,54 @@ class SensoryBase(Dataset):
                 self.Mval_out = None
                 self.Mtrn_out = None
     # END SensoryBase.set_speckledXV
+
+    def make_data_dicts(self, device=None, all=False):
+        """
+        Usage: train_ds, val_ds = dataset.make_data_dicts( device=None, all=False )
+        
+        Produce generic datasets on device of choice
+        device defaults to cuda-0
+        If <all> is True, then will make single dataset without XVal
+        """
+        from NTdatasets.generic import GenericDataset
+
+        if device is None:
+            print('  Datasets will be on cuda:0')
+            device = torch.device('cuda:0')
+
+        if self.speckled or all:
+            trn_inds = range(len(self))
+            val_inds = range(len(self))
+        else:
+            assert not self.trial_sample, "trial-sample will not work with generic datasets"
+            trn_inds = self.train_inds
+            val_inds = self.val_inds
+
+        ks = self[:2].keys()
+        dictTRN, dictVAL = {}, {}
+        for k in ks:
+            if not (k in ['dfs', 'Mtrn', 'Mval']):
+                dictTRN[k] = deepcopy(self[trn_inds][k])
+                dictVAL[k] = deepcopy(self[val_inds][k])
+
+        if all:
+            dictTRN['dfs'] = self[:]['dfs']
+        else:
+            if self.speckled:
+                assert ('Mtrn' in ks), "speckled not set on dataset"
+                dictTRN['dfs'] = self[:]['dfs'] * self[:]['Mtrn']
+                dictVAL['dfs'] = self[:]['dfs'] * self[:]['Mval']
+            else:
+                dictTRN['dfs'] = self[trn_inds]['dfs']
+                dictVAL['dfs'] = self[val_inds]['dfs']
+
+        train_ds = GenericDataset( dictTRN, device=device )
+        if all:
+            return train_ds
+
+        val_ds = GenericDataset( dictVAL, device=device )
+        return train_ds, val_ds
+    # END SensoryBase.make_data_dicts()
 
     def get_max_samples(self, gpu_n=0, history_size=1, nquad=0, num_cells=None, buffer=1.2):
         """
