@@ -225,7 +225,7 @@ class MultiClouds(SensoryBase):
 
         # Unit information
         channel_map = np.array(f['Robs_probe_ID'], dtype=np.int64)[0, :]
-        channel_ratings = np.array(f['Robs_rating'])[0, :]
+        channel_ratings = np.array(f['Robs_rating']).squeeze()
         if (NMUs > 0) & self.includeMUs:
             channel_map = np.concatenate( 
                 (channel_map, np.array(f['RobsMU_probe_ID'], dtype=np.int64).squeeze()), axis=0)
@@ -518,7 +518,6 @@ class MultiClouds(SensoryBase):
                 newstim = stim_tmp[self.tranges[expt_n], ...]
             
             L = newstim.shape[2]
-
             # Forget binocular for now
             if self.binocular:
                 print('currently not implemented')
@@ -558,13 +557,18 @@ class MultiClouds(SensoryBase):
                 L += 2*BUF
 
             # Read in stimuli
-            stimET = np.array(self.fhandles[expt_n]['stimET'][self.tranges[expt_n], ...], dtype=np.int8)
-            stimLP = np.array(self.fhandles[expt_n]['stim'][self.tranges[expt_n], ...], dtype=np.int8)
+            if len(self.fhandles[expt_n]['stimET'].shape) == 1:
+                stimET = None
+            else:
+                stimET = np.array(self.fhandles[expt_n]['stimET'][self.tranges[expt_n], ...], dtype=np.int8)
+            
             locsET = self.file_info[expt_n]['stim_locsET']
+            stimLP = np.array(self.fhandles[expt_n]['stim'][self.tranges[expt_n], ...], dtype=np.int8)
             locsLP = self.file_info[expt_n]['stim_locsLP']
 
             if self.luminance_only:
-                stimET = stimET[:, 0, ...][:, None, ...]  # maintain 2nd dim (length 1)
+                if stimET is not None:
+                    stimET = stimET[:, 0, ...][:, None, ...]  # maintain 2nd dim (length 1)
                 stimLP = stimLP[:, 0, ...][:, None, ...]
                 num_clr = 1
             else:
@@ -580,13 +584,14 @@ class MultiClouds(SensoryBase):
                     strip[:, :, :, OVLP['targetY']] = deepcopy((stimLP[:, :, OVLP['readX'], :][:, :, :, OVLP['readY']]))
                     newstim[:, :, OVLP['targetX'], :] = deepcopy(strip)
                 
-            for ii in range(locsET.shape[1]):
-                OVLP = self.rectangle_overlap_ranges(stim_pos, locsET[:, ii])
-                if OVLP is not None:
-                    print( "  Writing ETstim %d: overlap %d, %d"%(ii, len(OVLP['targetX']), len(OVLP['targetY'])))
-                    strip = deepcopy(newstim[:, :, OVLP['targetX'], :])
-                    strip[:, :, :, OVLP['targetY']] = deepcopy((stimET[:, :, OVLP['readX'], :][:, :, :, OVLP['readY']]))
-                    newstim[:, :, OVLP['targetX'], :] = deepcopy(strip) 
+            if stimET is not None:    
+                for ii in range(locsET.shape[1]):
+                    OVLP = self.rectangle_overlap_ranges(stim_pos, locsET[:, ii])
+                    if OVLP is not None:
+                        print( "  Writing ETstim %d: overlap %d, %d"%(ii, len(OVLP['targetX']), len(OVLP['targetY'])))
+                        strip = deepcopy(newstim[:, :, OVLP['targetX'], :])
+                        strip[:, :, :, OVLP['targetY']] = deepcopy((stimET[:, :, OVLP['readX'], :][:, :, :, OVLP['readY']]))
+                        newstim[:, :, OVLP['targetX'], :] = deepcopy(strip) 
 
             #stim = torch.tensor( newstim, dtype=torch.float32, device=self.device )
         # Note stim stored in numpy is being represented as full 3-d + 1 tensor (time, channels, NX, NY)
