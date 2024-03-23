@@ -74,18 +74,55 @@ class WhiskerData(SensoryBase):
         self.val_inds = Xi
 
         ##### Additional Stim processing #####
-        # Coincident touches
-        multitouches = np.zeros([NT, 4])
-        for ipsi in range(2):  # AC, AD, BC, BD (all cross-side pairings)
-            multitouches[:,2*ipsi] = self.touchfull[:, 0] * self.touchfull[:, 2+ipsi]
-            multitouches[:,1+2*ipsi] = self.touchfull[:, 1] * self.touchfull[:, 2+ipsi]
-
-        # Extract onset for both single and multitouches
         self.touches = np.zeros([NT, 4])
-        self.multitouches = np.zeros([NT, 4])
         for ww in range(4):
             self.touches[np.where(np.diff(self.touchfull[:, ww]) > 0)[0]+1, ww] = 1
-            self.multitouches[np.where(np.diff(multitouches[:, ww]) > 0)[0]+1, ww] = 1
+
+        # Coincident touches -- original (pre 2024)
+        #multitouches = np.zeros([NT, 4])
+        #for ipsi in range(2):  # AC, AD, BC, BD (all cross-side pairings)
+        #    multitouches[:,2*ipsi] = self.touchfull[:, 0] * self.touchfull[:, 2+ipsi]
+        #    multitouches[:,1+2*ipsi] = self.touchfull[:, 1] * self.touchfull[:, 2+ipsi]
+        # New multi-touches based on scotts advice
+        #self.multitouches = np.zeros([NT, 8])
+        self.multitouches = np.zeros([NT, 16])
+        self.shadow_touches = np.zeros([NT, 4])
+
+        coin_win = 10
+        #self.touches[-coin_win:, :] = 0  # just so no crashing
+        self.touches[:coin_win, :] = 0  # just so no crashing -- retro
+        self.touches[(-coin_win):, :] = 0  # just so no crashing -- post
+        for hem in range(2):
+            oppo_ws = (1-hem)*2 + np.arange(2)
+            for pw in range(2):
+                ww = 2*hem+pw
+                pwtouches = np.where(self.touches[:, ww] > 0)[0]
+                for tt in pwtouches:
+                    uni_touch=True
+                    ipsi_touch_count = np.sum(self.touches[range(tt-coin_win+1, tt+1), :][:,oppo_ws], axis=0)
+                    # IPSI FIRST
+                    if ipsi_touch_count[0] > 0:
+                        self.multitouches[tt, 4*ww] = 1.0
+                    elif ipsi_touch_count[1] > 0:
+                        self.multitouches[tt, 4*ww+1] = 1.0
+                    if np.sum(ipsi_touch_count) > 0:
+                        uni_touch=False
+                    # IPSI SECOND
+                    ipsi_touch_count = np.sum(self.touches[range(tt, tt+coin_win), :][:,oppo_ws], axis=0)
+                    if ipsi_touch_count[0] > 0:
+                        self.multitouches[tt, 4*ww+2] = 1.0
+                    elif ipsi_touch_count[1] > 0:
+                        self.multitouches[tt, 4*ww+3] = 1.0
+                    if np.sum(ipsi_touch_count) > 0:
+                        uni_touch=False
+                    
+                    if uni_touch:
+                        self.shadow_touches[tt, ww] = 1.0
+
+        # Extract onset for both single and multitouches
+        #self.multitouches = np.zeros([NT, 4])
+        #for ww in range(4):
+        #    self.multitouches[np.where(np.diff(multitouches[:, ww]) > 0)[0]+1, ww] = 1
 
         self.TRpistons, self.TRoutcomes = self.trial_classify(TRinds, pistons, behavior)
         self.TRhit = np.where(self.TRoutcomes == 1)[0]
@@ -111,6 +148,9 @@ class WhiskerData(SensoryBase):
     def prepare_stim( self, stim_config=0, num_lags=None, temporal_basis=None, include_multitouches=False ):
 
         self.include_multitouches = include_multitouches
+        if include_multitouches:
+            self.touches = deepcopy(self.shadow_touches)  # makes only single-whisker
+
         #self.stim = torch.tensor( self.touches, dtype=torch.float32, device=device )
         if num_lags is None:
             num_lags = self.num_lags
@@ -129,7 +169,6 @@ class WhiskerData(SensoryBase):
 
         if include_multitouches:
             self.mtouches = self.time_embedding( stim=self.multitouches, nlags=num_lags )
-
         if temporal_basis is not None:
             # then temporal basis gives the doubling time
             self.stim_anchors = self.anchor_set(num_lags, temporal_basis)
@@ -148,11 +187,12 @@ class WhiskerData(SensoryBase):
                     'bxt,tf->bxf', 
                     self.stimA.reshape([self.NT, self.stim_dims[0], -1]), 
                     self.TB).reshape([self.NT, -1])
-            if include_multitouches is not None:
+            if include_multitouches:
+                multiT_dims = self.multitouches.shape[1]
                 self.mtouches = torch.einsum(
-                    'bxt,tf->bxf', 
-                    torch.tensor(self.multitouches.reshape([self.NT, 4, -1]), dtype=torch.float32), 
-                    self.TB).reshape([self.NT, -1])
+                    'bxt,tf->bxf', self.mtouches.reshape([self.NT, multiT_dims, -1]), self.TB).reshape([self.NT, -1])
+                    #torch.tensor(self.multitouches.reshape([self.NT, 4, -1]), dtype=torch.float32), 
+                    #self.TB).reshape([self.NT, -1])
             self.stim_dims[3] = self.TB.shape[1]
         else:
             self.stim_dims[3] = num_lags
