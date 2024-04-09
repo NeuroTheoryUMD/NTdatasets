@@ -15,7 +15,7 @@ import h5py
 
 class MultiDataset(Dataset):
     """
-    MULTIDATASET can load batches from multiple datasets
+    MULTIDATASET can load batches from multiple datasets.
     """
 
     def __init__(self,
@@ -26,6 +26,16 @@ class MultiDataset(Dataset):
         time_embed=True,
         includeMUs=False,
         device=None):
+        """
+        Args:
+            sess_list: list of sessions
+            dirname: directory the files are stored in
+            preload: whether to load all of the data into memory
+            num_lags: number of lags to use when time-embedding
+            time_embed: whether to time-embed or not
+            includeMUs: whether to include the multi-units or not
+            device: the device to move the data onto
+        """
 
         self.dirname = dirname
         self.sess_list = sess_list
@@ -158,6 +168,15 @@ class MultiDataset(Dataset):
     # END MultiDataset.__init__
 
     def to_tensor(self, device=None):
+        """
+        Convert all data to torch tensors
+
+        Args:
+            device: torch device to move data to
+
+        Returns:
+            None
+        """
         if device is None:
             if self.device is None:
                 device = torch.device("cpu")
@@ -245,6 +264,12 @@ class MultiDataset(Dataset):
         Calculates average firing probability across specified inds (or whole dataset)
         -- Note will respect datafilters
         -- will return precalc value to save time if already stored
+
+        Args:
+            inds: indices to calculate across
+
+        Returns:
+            avRs: average firing rates
         """
         if inds is None:
             inds = range(self.NT)
@@ -271,6 +296,15 @@ class MultiDataset(Dataset):
     # END MultiDatasset.avrates()
 
     def subset( self, indxs=None, train=True, val=False, device=None ):
+        """
+        Subsets the dataset based on indices.
+
+        Args:
+            indxs: indices to subset the data
+
+        Returns:
+            None
+        """
         assert self.preload, "Need preloaded data for this to work"
 
         self.fhandles = None
@@ -292,9 +326,18 @@ class MultiDataset(Dataset):
     # End Subset
 
     def shift_stim_fixation( self, stim, shift):
-        """Simple shift by integer (rounded shift) and zero padded. Note that this is not in 
+        """
+        Simple shift by integer (rounded shift) and zero padded. Note that this is not in 
         is in units of number of bars, rather than -1 to +1. It assumes the stim
-        has a batch dimension (over a fixation), and shifts the whole stim by the same amount."""
+        has a batch dimension (over a fixation), and shifts the whole stim by the same amount.
+        
+        Args:
+            stim: stimulus tensor
+            shift: shift amount
+
+        Returns:
+            shstim: shifted stimulus tensor
+        """
         sh = round(shift)
         shstim = stim.new_zeros(*stim.shape)
         if sh < 0:
@@ -308,14 +351,17 @@ class MultiDataset(Dataset):
     # END MultiDatasetFix.shift_stim_fixation
 
     def crossval_setup(self, folds=5, random_gen=False, test_set=False):
-        """This sets the cross-validation indices up We can add featuers here. Many ways to do this
+        """
+        This sets the cross-validation indices up We can add featuers here. Many ways to do this
         but will stick to some standard for now. It sets the internal indices, which can be read out
         directly or with helper functions. Perhaps helper_functions is the best way....
         
-        Inputs: 
+        Args: 
+            folds: number of folds for cross-validation
             random_gen: whether to pick random fixations for validation or uniformly distributed
             test_set: whether to set aside first an n-fold test set, and then within the rest n-fold train/val sets
-        Outputs:
+        
+        Returns:
             None: sets internal variables test_inds, train_inds, val_inds
         """
 
@@ -357,7 +403,18 @@ class MultiDataset(Dataset):
     # END MultiDatasetFix.crossval_setup
 
     def fold_sample( self, num_items, folds, random_gen=False):
-        """This really should be a general method not associated with self"""
+        """
+        This really should be a general method not associated with self
+        
+        Args:
+            num_items: number of items to fold
+            folds: number of folds
+            random_gen: whether to randomly sample or not
+
+        Returns:
+            val_items: validation items
+            rem_items: remaining items
+        """
         if random_gen:
             num_val = int(num_items/folds)
             tmp_seq = np.random.permutation(num_items)
@@ -372,7 +429,15 @@ class MultiDataset(Dataset):
 
 
 def get_stim_url(id):
-    
+    """
+    Get the URL for the stimulus file.
+
+    Args:
+        id: stimulus ID
+
+    Returns:
+        url: URL for the stimulus file
+    """
     urlpath = {
             'expt01': 'https://www.dropbox.com/s/mn70kyohmp3kjnl/expt01.mat?dl=1',
             'expt02':'https://www.dropbox.com/s/pods4w89tbu2x57/expt02.mat?dl=1',
@@ -398,7 +463,16 @@ def get_stim_url(id):
     return urlpath[id]
 
 def download_set(sessname, fpath):
-    
+    """
+    Download the data set.
+
+    Args:
+        sessname: session name
+        fpath: file path
+
+    Returns:
+        None
+    """
     ensure_dir(fpath)
 
     # Download the data set
@@ -408,6 +482,15 @@ def download_set(sessname, fpath):
 
 # --- Define data-helpers
 def time_in_blocks(block_inds):
+    """
+    Calculate the total time in blocks.
+
+    Args:
+        block_inds: block indices
+
+    Returns:
+        NT: total time in blocks
+    """
     num_blocks = block_inds.shape[0]
     #print( "%d number of blocks." %num_blocks)
     NT = 0
@@ -417,6 +500,17 @@ def time_in_blocks(block_inds):
 
 
 def make_block_inds( block_lims, gap=20, separate = False):
+    """
+    Make block indices.
+
+    Args:
+        block_lims: block limits
+        gap: gap
+        separate: separate
+
+    Returns:
+        block_inds: block indices
+    """
     block_inds = []
     for nn in range(block_lims.shape[0]):
         if separate:
@@ -428,7 +522,20 @@ def make_block_inds( block_lims, gap=20, separate = False):
 
 
 def monocular_data_import( datadir, exptn, num_lags=20 ):
+    """
+    Import monocular data.
 
+    Args:
+        datadir: data directory
+        exptn: experiment number
+        num_lags: number of lags
+
+    Returns:
+        stim_all: stimulus
+        Robs_all: responses
+        DFs_all: data filters
+        Eadd_info: additional information
+    """
     from copy import deepcopy
 
     time_shift = 1

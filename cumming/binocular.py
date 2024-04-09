@@ -14,17 +14,19 @@ class binocular_single(SensoryBase):
 
     def __init__(self, expt_num=None, time_embed=0, num_lags=12, skip_lags=0, **kwargs):
         """
-        Inputs: 
+        Args: 
+            expt_num: the experiment index
+            time_embed: whether to time-embed the stimulus or not
+            num_lags: the number of lags to use in time-embedding
+            skip_lags: shift stim to throw out early lags
             filename: currently the pre-processed matlab file from Dan's old-style format
-            
+            **kwargs: non-dataset specific arguments that get passed into SensoryBase
+
             Inherited (but needed from SensoryBase init):
                 datadir, 
                 time_embed=2,  # 0 is no time embedding, 1 is time_embedding with get_item, 2 is pre-time_embedded
                 include_MUs = False,
                 drift_interval = None,
-
-            skip_lags: shift stim to throw out early lags
-            **kwargs: non-dataset specific arguments that get passed into SensoryBase
             """
 
         assert expt_num is not None, "Binocular experiment number needed (expt_n)."
@@ -127,7 +129,17 @@ class binocular_single(SensoryBase):
     # END binocular_single.__init__
 
     def prepare_stim( self, time_embed=0, skip_lags=None, num_lags=None ):
+        """
+        Prepare stimulus for dataset.
 
+        Args:
+            time_embed: whether to time-embed the stimulus or not
+            skip_lags: shift stim to throw out early lags
+            num_lags: the number of lags to use in time-embedding
+
+        Returns:
+            None
+        """
         if skip_lags is not None:  
             self.skip_lags = skip_lags
             
@@ -152,6 +164,15 @@ class binocular_single(SensoryBase):
     # END binocular_single.prepare_stim()
 
     def separate_eyes(self, val=True):
+        """
+        Separate the stimulus into left and right eyes.
+
+        Args:
+            val: whether to separate the stimulus or not
+
+        Returns:
+            None
+        """
         NX = self.stim_dims[1]//2
         stim = self.stim.reshape([self.NT, 2*NX, self.num_lags])
         self.stimL = stim[:, :NX, :].reshape([self.NT, -1])

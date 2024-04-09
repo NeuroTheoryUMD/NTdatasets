@@ -11,9 +11,18 @@ import h5py
 from NTdatasets.sensory_base import SensoryBase
 
 class WhiskerData(SensoryBase):
+    """
+    WhiskerData is a class for handling whisker data from the lab of Scott Pluta.
+    """
 
     def __init__(self, expt_name=None, hemi=0, num_lags=30, **kwargs):
-
+        """
+        Args:
+            expt_name: name of the experiment directory within the datadir
+            hemi: 0=left, 1=right, 2=both
+            num_lags: number of lags to include in the design matrix
+            **kwargs: additional arguments to pass to the parent class
+        """
         assert expt_name is not None, "Must specify expt_name, which is the directory name within the datadir."
         # call parent constructor
         super().__init__(filenames=expt_name, num_lags=num_lags, **kwargs)
@@ -146,7 +155,17 @@ class WhiskerData(SensoryBase):
     # END WhiskerData.__init__()
 
     def prepare_stim( self, stim_config=0, num_lags=None, temporal_basis=None, include_multitouches=False ):
+        """
+        Prepare stimulus for model fitting
 
+        Args:
+            stim_config: 0=AB, 1=BA, 2=ABCD
+            num_lags: number of lags to include in the design matrix
+            temporal_basis: doubling time for temporal basis
+
+        Returns:
+            None
+        """
         self.include_multitouches = include_multitouches
         if include_multitouches:
             self.touches = deepcopy(self.shadow_touches)  # makes only single-whisker
@@ -199,10 +218,16 @@ class WhiskerData(SensoryBase):
     # END WhiskerData.prepare_stim()
 
     def set_hemispheres( self, out_config=0, in_config=0 ):
-        """This sets cells_out and cells_in based on hemisphere, making things easy. 
+        """
+        This sets cells_out and cells_in based on hemisphere, making things easy. 
         Can also set cells_out and cells_in by hand.
         
-        out_config, in_config: 0=left outputs, 1=right outputs, 2=both"""
+        Args:
+            out_config, in_config: 0=left outputs, 1=right outputs, 2=both
+        
+        Returns:
+            None
+        """
         if out_config < 2:
             self.set_cells(self.Rparse[out_config])
         else:
@@ -215,11 +240,16 @@ class WhiskerData(SensoryBase):
     # END WhiskerData.set_hemispheres
 
     def construct_XLV( self, tent_spacing=12, cueduncued=False ):
-        """Constructs tent-basis-style trial-based tent function
-        Inputs: 
+        """
+        Constructs tent-basis-style trial-based tent function
+        
+        Args: 
             num_tents: default 11
             cueduncued: whether to fit separate kernels to cued/uncued
-            """
+        
+        Returns:
+            None
+        """
         # automatically wont have any anchors past min_trial_size
         anchors = np.arange(0, self.min_trial_size, tent_spacing) 
         # Generate master tent_basis
@@ -288,6 +318,16 @@ class WhiskerData(SensoryBase):
 
     # Make temporal basis possible
     def temporal_basis( self, nlags, anchors ):
+        """
+        Make temporal basis for use in temporal basis expansion.
+
+        Args:
+            nlags: number of lags
+            anchors: list of anchor points for the temporal basis
+
+        Returns:
+            KB: temporal basis
+        """
         if anchors[-1] < nlags:
             anchors.append(nlags)
         anchors = np.array(anchors, dtype=np.int64)-1
@@ -307,6 +347,17 @@ class WhiskerData(SensoryBase):
         return KB
 
     def anchor_set( self, nlags, doubling_time, offset=0 ):
+        """
+        Make anchor set for temporal basis expansion.
+
+        Args:
+            nlags: number of lags
+            doubling_time: doubling time for temporal basis
+            offset: offset for anchor set
+
+        Returns:
+            a: anchor set
+        """
         sp = 1
         a = []
         x = offset
@@ -324,13 +375,19 @@ class WhiskerData(SensoryBase):
     
     # Autoencoders
     def autoencoder_design_matrix( self, pre_win=0, post_win=0, blank=0, cells=None ):
-        """Makes auto-encoder input using windows described above, and including the
+        """
+        Makes auto-encoder input using windows described above, and including the
         chosen cells. Will put as additional covariate "ACinput" in __get_item__
-        Inputs:
+        
+        Args:
             pre_win: how many time steps to include before origin
             post_win: how many time steps to include after origin
             blank: how many time steps to blank in each direction, including origin
-            """
+            cells: which cells to include in the auto-encoder design matrix
+
+        Returns:
+            None
+        """
 
         if cells is None:
             cells = np.arange(self.NC)
@@ -354,14 +411,15 @@ class WhiskerData(SensoryBase):
 
     def WTAs( self, r0=5, r1=30):
         """
-        Inputs: 
+        Args: 
             Ton: list of touch onsets for all 4 whiskers
             Rs: Robs 
             r0, r1: how many lags before and after touch onset to include (and block out)
-        Output:
+
+        Returns:
             wtas: whisker-triggered averages of firing rate
             nontouchFRs: average firing rate (spike prob) away from all four whisker touches
-            """
+        """
         L = r1+r0
         wtas = np.zeros([L,4, self.NC])
         wcounts = deepcopy(wtas)
@@ -391,8 +449,22 @@ class WhiskerData(SensoryBase):
     @staticmethod
     def create_NLmap_design_matrix( x, num_bins, val_inds=None, thresh=5, 
                                 borderL=None, borderR=None, anchorL=True, rightskip=False):
-        """Make design matrix of certain number of bins that maps variable of interest
-        anchorL is so there is not an overall bias fit implicitly"""
+        """
+        Make design matrix of certain number of bins that maps variable of interest
+        anchorL is so there is not an overall bias fit implicitly.
+        
+        Args:
+            x: variable of interest
+            num_bins: number of bins
+            val_inds: indices to use for thresholding
+            thresh: threshold for determining borders
+            borderL, borderR: left and right borders
+            anchorL: whether to anchor the left side at zero
+            rightskip: whether to skip the rightmost bin
+
+        Returns:
+            XNL: design matrix
+        """
         from NDNT.utils.NDNutils import design_matrix_tent_basis
 
         NT = x.shape[0]
@@ -424,12 +496,33 @@ class WhiskerData(SensoryBase):
 
     @staticmethod
     def find_first_locmin(trace, buf=0, sm=0):
+        """
+        Find first local minimum in trace, starting from buf.
+
+        Args:
+            trace: trace to analyze
+            buf: starting point
+            sm: smoothing window
+
+        Returns:
+            loc: location of first local minimum
+        """
         der = np.diff(trace)
         loc = np.where(np.diff(trace[buf:]) >= 0)[0][0]+buf
         return loc
 
     @staticmethod
     def prop_distrib(events, prop_name):
+        """
+        Extracts distribution of a property from events.
+
+        Args:
+            events: events
+            prop_name: property name
+
+        Returns:
+            distrib: distribution of the property
+        """
         assert prop_name in events[0], 'Invalid property name.'
         distrib = np.zeros(len(events))
         for tt in range(len(events)):
@@ -438,6 +531,15 @@ class WhiskerData(SensoryBase):
 
     @staticmethod
     def trial_parse( frames ):
+        """
+        Parse trials from frames.
+        
+        Args:
+            frames: frames
+
+        Returns:
+            blks: trial blocks
+        """
         trial_starts = np.where(frames == 1)[0]
         num_trials = len(trial_starts)
         blks = np.zeros([num_trials, 2], dtype='int64')
@@ -448,7 +550,16 @@ class WhiskerData(SensoryBase):
 
     @staticmethod
     def trial_classify( blks, pistons, outcomes=None ):
-        """outcomes: 1=hit, 2=miss, 3=false alarm, 4=correct reject"""
+        """
+        Args:
+            blks: trial blocks
+            pistons: pistons
+            outcomes: 1=hit, 2=miss, 3=false alarm, 4=correct reject
+
+        Returns:
+            TRpistons: trial pistons
+            TRoutcomes: trial outcomes
+        """
         #assert pistons is not None, "pistons cannot be empty"
         Ntr = blks.shape[0]
         #= np.mean(blk_inds, axis=1).astype('int64')
@@ -471,7 +582,17 @@ class WhiskerData(SensoryBase):
 
     @staticmethod
     def process_locations( clocs ):
-        """electrode_info: first column is shank membership, second column is electrode depth"""
+        """
+        Process locations.
+
+        electrode_info: first column is shank membership, second column is electrode depth
+
+        Args:
+            clocs: cell locations
+
+        Returns:
+            num_cells: number of cells
+        """
         hemis = np.where(clocs[:,0] == 1)[0]
         NC = clocs.shape[0]
         if len(hemis) > 1:

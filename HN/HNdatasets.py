@@ -11,16 +11,18 @@ import h5py
 from NTdatasets.sensory_base import SensoryBase
 
 class HNdataset(SensoryBase):
+    """
+    Class for handling HN data.
+    """
 
     def __init__(self, filename=None, which_stim='left', skip_lags=2, **kwargs):
         """
-        Inputs: 
+        Args: 
             filename: currently the pre-processed matlab file from Dan's old-style format
             which_stim: which stim is relevant for the neurons in this dataset (default 'left')
             skip_lags: shift stim to throw out early lags
             **kwargs: non-dataset specific arguments that get passed into SensoryBase
-            """
-
+        """
         # call parent constructor
         super().__init__(filename, **kwargs)
         print(self.datadir, filename)
@@ -156,7 +158,17 @@ class HNdataset(SensoryBase):
     # END HNdata.__init__()
 
     def prepare_stim( self, which_stim='left', skip_lags=None, num_lags=None ):
+        """
+        Prepares stimulus for dataset.
 
+        Args:
+            which_stim: 'left' or 'right' (default 'left')
+            skip_lags: how many lags to skip (default 2)
+            num_lags: how many lags to include in stimulus (default None, will use dataset value)
+
+        Returns:
+            None
+        """
         if skip_lags is not None:  
             self.skip_lags = skip_lags
         # otherwise will use already set value
@@ -190,11 +202,16 @@ class HNdataset(SensoryBase):
     # END HNdata.prepare_stim()
 
     def construct_Xadapt( self, tent_spacing=12, cueduncued=False ):
-        """Constructs adaptation-within-trial tent function
-        Inputs: 
+        """
+        Constructs adaptation-within-trial tent function
+        
+        Args: 
             num_tents: default 11
             cueduncued: whether to fit separate kernels to cued/uncued
-            """
+
+        Returns:
+            None
+        """
         # automatically wont have any anchors past min_trial_size
         anchors = np.arange(0, self.min_trial_size, tent_spacing) 
         # Generate master tent_basis
@@ -221,13 +238,18 @@ class HNdataset(SensoryBase):
     # END HNdataset.construct_Xadapt()
 
     def autoencoder_design_matrix( self, pre_win=0, post_win=0, blank=0, cells=None ):
-        """Makes auto-encoder input using windows described above, and including the
+        """
+        Makes auto-encoder input using windows described above, and including the
         chosen cells. Will put as additional covariate "ACinput" in __get_item__
-        Inputs:
+        
+        Args:
             pre_win: how many time steps to include before origin
             post_win: how many time steps to include after origin
             blank: how many time steps to blank in each direction, including origin
-            """
+        
+        Returns:
+            None
+        """
 
         if cells is None:
             cells = np.arange(self.NC)
@@ -278,6 +300,18 @@ class HNdataset(SensoryBase):
 
     @staticmethod
     def train_test_assign( trial_ns, fold=4, use_random=True ):  # this should be a static function
+        """
+        Assigns trials to training and test sets.
+
+        Args:
+            trial_ns: trial numbers
+            fold: number of folds (default 4)
+            use_random: whether to use random assignment (default True)
+
+        Returns:
+            utr: trial numbers for training set
+            xtr: trial numbers for test set
+        """
         num_tr = len(trial_ns)
         if use_random:
             permu = np.random.permutation(num_tr)
@@ -293,6 +327,17 @@ class HNdataset(SensoryBase):
 
     @staticmethod
     def channel_list_scrub( fnames, subset=None, display_names=True ):  # This should also be a static function
+        """
+        Scrubs channel names from filenames.
+
+        Args:
+            fnames: list of filenames
+            subset: subset of filenames (default None)
+            display_names: whether to display names (default True)
+
+        Returns:
+            chnames: list of channel names
+        """
         chnames = []
         if subset is None:
             subset = list(range(len(fnames)))
@@ -350,14 +395,19 @@ class HNdataset(SensoryBase):
     
 
 class MotionNeural(SensoryBase):
+    """
+    Class for handling motion neural data.
+    """
 
     def __init__(self, filename=None, num_lags=30, tr_gap=10, **kwargs):
         """
-        Inputs: 
+        Args:
+            num_lags: number of lags to include in stimulus (default 30)
+            tr_gap: number of frames to blank out after each trial (default 10) 
             filename: currently the pre-processed matlab file from Dan's old-style format
             datadir: directory for data (goes directly into SensoryBase)
             **kwargs: non-dataset specific arguments that get passed into SensoryBase
-            """
+        """
 
         # Call parent constructor
         super().__init__(filename, **kwargs)
@@ -434,10 +484,15 @@ class MotionNeural(SensoryBase):
 
     def assemble_stimulus(self, which_stim='all', use_trial_type=False, num_lags=180 ):
         """
-        'which_stim' could be 'trial' (default) using just the first stim onset" or could
-        mark each flash (calling 'which_stim' anything else), although this would not implicitly 
-        take things like adapation into account
-        'use_trial_type' could fit different stim responses in the two conditions to gauge the effects"""
+        Assembles stimulus for dataset.
+
+        Args:
+            which_stim: could be 'trial' (default) using just the first stim onset" or could
+                mark each flash (calling 'which_stim' anything else), although this would not implicitly 
+                take things like adapation into account
+            use_trial_type: could fit different stim responses in the two conditions to gauge the effects
+            num_lags: number of lags to include in stimulus (default 180)
+        """
 
         self.num_lags = num_lags
         if which_stim == 'trial':
@@ -458,9 +513,15 @@ class MotionNeural(SensoryBase):
     # END MotionNeural.assemble_stimulus()
 
     def construct_Xadapt( self, tent_start=18+8, tent_spacing=20 ):
-        """Constructs adaptation-within-trial tent function
-        Inputs: 
-            """
+        """
+        Constructs adaptation-within-trial tent function
+        Args:
+            tent_start: starting point for tent basis
+            tent_spacing: spacing between tent basis
+
+        Returns:
+            None
+        """
         # Put first anchor 
         anchors = tent_start + tent_spacing*np.arange(0, 6)  # 5 pulses (ignoring first)
 
@@ -477,13 +538,17 @@ class MotionNeural(SensoryBase):
     # END MotionNeural.construct_Xadapt()
 
     def autoencoder_design_matrix( self, trial_level=False, pre_win=0, post_win=0, blank=0, cells=None ):
-        """Makes auto-encoder input using windows described above, and including the
+        """
+        Makes auto-encoder input using windows described above, and including the
         chosen cells. Will put as additional covariate "ACinput" in __get_item__
-        Inputs:
+        
+        Args:
+            trial_level: whether to average over trials
             pre_win: how many time steps to include before origin
             post_win: how many time steps to include after origin
             blank: how many time steps to blank in each direction, including origin
-            """
+            cells: which cells to include
+        """
 
         if cells is None:
             cells = np.arange(self.NC)

@@ -36,8 +36,19 @@ class SensoryBase(Dataset):
         drift_interval = None,
         device=torch.device('cpu')
         ):
-        """Constructor options"""
-
+        """
+        Constructor options
+        
+        Args:
+            filenames: the filenames to use
+            datadir: the data directory
+            trial_sample: whether to sample trials
+            num_lags: the number of lags to use
+            time_embed: the time embedding to use
+            include_MUs: whether to include MUs
+            drift_interval: the drift interval to use
+            device: the device to use
+        """
         self.datadir = datadir
         self.filenames = filenames
         self.device = device
@@ -92,6 +103,16 @@ class SensoryBase(Dataset):
     # END SensoryBase.__init__
 
     def add_covariate( self, cov_name=None, cov=None ):
+        """
+        Adds a covariate to the dataset
+
+        Args:
+            cov_name: name of the covariate
+            cov: the covariate itself
+
+        Returns:
+            None
+        """
         assert cov_name is not None, "Need cov_name"
         assert cov is not None, "Missing cov"
         if len(cov.shape) == 1:
@@ -118,17 +139,41 @@ class SensoryBase(Dataset):
     # END SensoryBase.add_covariate()
 
     def append_covariates( self, out, idx ):
-        """Complements __get_item__ to add covariates to existing dictionary"""
+        """
+        Complements __get_item__ to add covariates to existing dictionary
+        
+        Args:
+            out: the dictionary to append to
+            idx: the index to append at
+
+        Returns:
+            None
+        """
         for cov_name, cov in self.covariates.items():
             out[cov_name] = cov[idx, :]
         # Return out, or not?
 
     def prepare_stim( self ):
+        """
+        This function is meant to be overloaded by child classes
+
+        Returns:
+            None
+        """
         print('Default prepare stimulus method.')
 
     def set_cells( self, cell_list=None, verbose=True):
-        """Set outputs to potentially limit robs/dfs to certain cells 
-        This sets cells_out but also constructs efficient data structures"""
+        """
+        Set outputs to potentially limit robs/dfs to certain cells 
+        This sets cells_out but also constructs efficient data structures
+        
+        Args:
+            cell_list: list of cells to output
+            verbose: whether to print out the number of cells
+
+        Returns:
+            None
+        """
         if cell_list is None:
             # Then reset to full list
             self.cells_out = []
@@ -155,8 +200,18 @@ class SensoryBase(Dataset):
     # END SensoryBase.set_cells()
 
     def time_embedding( self, stim=None, nlags=None, verbose=True ):
-        """Assume all stim dimensions are flattened into single dimension. 
-        Will only act on self.stim if 'stim' argument is left None"""
+        """
+        Assume all stim dimensions are flattened into single dimension. 
+        Will only act on self.stim if 'stim' argument is left None
+        
+        Args:
+            stim: the stimulus to time-embed
+            nlags: the number of lags to use
+            verbose: whether to print out the time embedding process
+
+        Returns:
+            tmp_stim: the time-embedded stimulus
+        """
 
         if nlags is None:
             nlags = self.num_lags
@@ -192,7 +247,15 @@ class SensoryBase(Dataset):
     # END SensoryBase.time_embedding()
 
     def construct_drift_design_matrix( self, block_anchors=None):
-        """Note this requires self.block_inds, and either uses self.drift_interval or block_anchors"""
+        """
+        Note this requires self.block_inds, and either uses self.drift_interval or block_anchors
+        
+        Args:
+            block_anchors: the block anchors to use
+            
+        Returns:
+            None
+        """
 
         assert self.block_inds is not None, "Need block_inds defined as an internal variable"
 
@@ -215,8 +278,19 @@ class SensoryBase(Dataset):
     # END SenspryBase.construct_drift_design_matrix()
 
     def trial_psths( self, trials=None, R=None, trial_size=None, verbose=False ):
-        """Computes average firing rate of cells_out at bin-resolution, averaged across trials
-        given in block_inds"""
+        """
+        Computes average firing rate of cells_out at bin-resolution, averaged across trials
+        given in block_inds
+        
+        Args:
+            trials: the trials to compute the PSTHs for
+            R: the firing rates to use
+            trial_size: the size of the trials
+            verbose: whether to print out the trial sizes
+
+        Returns:
+            psths: the PSTHs
+        """
 
         Ntr = len(self.block_inds)
         assert Ntr > 0, "Cannot compute PSTHs without block_inds established in dataset."
@@ -269,11 +343,16 @@ class SensoryBase(Dataset):
     # END SensoryBase.calculate_psths()
 
     def construct_LVtents( self, tent_spacing=12 ):
-        """Constructs tent-basis-style trial-based tent function
-        Inputs: 
-            num_tents: default 11
-            cueduncued: whether to fit separate kernels to cued/uncued
-            """
+        """
+        Constructs tent-basis-style trial-based tent function
+        
+        Args: 
+            tent_spacing: the spacing of the tent functions
+
+        Returns:
+            XLV: the design matrix
+            LVdims: the dimensions of the design matrix
+        """
         
         if self.block_inds is not None:
             # Compute minimum and maximum trial size
@@ -322,6 +401,9 @@ class SensoryBase(Dataset):
         
         This makes design matrix as input for LVlayer (indexed LV for each trial) and outputs X, LVdims 
         to actually figure out which LVs correspond to which trial, once it is done
+
+        Returns:
+            X: the design matrix
         """
 
         num_trials = len(self.block_inds)
@@ -340,6 +422,10 @@ class SensoryBase(Dataset):
 
         Sets up tent-basis-input to LVLayer (part of NDNT code)
         This preserves all data by using multiple effective trials for long trials. 
+
+        Args:
+            tent_spacing: the spacing of the tent functions
+            trsize: the size of the trials
         """
         # Determine trial_size
         Ntr = len(self.block_inds)
@@ -379,17 +465,21 @@ class SensoryBase(Dataset):
 
     @staticmethod
     def design_matrix_drift( NT, anchors, zero_left=True, zero_right=False, const_left=False, const_right=False, to_plot=False):
-        """Produce a design matrix based on continuous data (s) and anchor points for a tent_basis.
+        """
+        Produce a design matrix based on continuous data (s) and anchor points for a tent_basis.
         Here s is a continuous variable (e.g., a stimulus) that is function of time -- single dimension --
         and this will generate apply a tent basis set to s with a basis variable for each anchor point. 
         The end anchor points will be one-sided, but these can be dropped by changing "zero_left" and/or
         "zero_right" into "True".
 
-        Inputs: 
+        Args: 
             NT: length of design matrix
             anchors: list or array of anchor points for tent-basis set
             zero_left, zero_right: boolean whether to drop the edge bases (default for both is False)
-        Outputs:
+            const_left, const_right: boolean whether to make constant basis on left/right (default for both is False)
+            to_plot: whether to plot the design matrix
+        
+        Returns:
             X: design matrix that will be NT x the number of anchors left after zeroing out left and right
         """
         anchors = list(anchors)
@@ -429,7 +519,18 @@ class SensoryBase(Dataset):
     
     @staticmethod
     def construct_onehot_design_matrix( stim=None, return_categories=False ):
-        """the stimulus should be numpy -- not meant to be used with torch currently"""
+        """
+        Construct one-hot design matrix from stimulus.
+
+        The stimulus should be numpy -- not meant to be used with torch currently.
+        
+        Args:
+            stim: the stimulus to construct one-hot design matrix from
+            return_categories: whether to return the categories
+
+        Returns:
+            OHmatrix: the one-hot design matrix
+        """
         assert stim is not None, "Must pass in stimulus"
         assert len(stim.shape) < 3, "Stimulus must be one-dimensional"
         assert isinstance( stim, np.ndarray ), "stim must be a numpy array"
@@ -452,6 +553,12 @@ class SensoryBase(Dataset):
         Calculates average firing probability across specified inds (or whole dataset)
         -- Note will respect datafilters
         -- will return precalc value to save time if already stored
+
+        Args:
+            inds: the indices to calculate the average firing probability across
+
+        Returns:
+            avRs: the average firing probability
         """
         if inds is None:
             inds = range(self.NT)
@@ -477,14 +584,18 @@ class SensoryBase(Dataset):
     # END .avrates()
 
     def crossval_setup(self, folds=5, random_gen=False, test_set=False, verbose=False):
-        """This sets the cross-validation indices up We can add featuers here. Many ways to do this
+        """
+        This sets the cross-validation indices up We can add featuers here. Many ways to do this
         but will stick to some standard for now. It sets the internal indices, which can be read out
         directly or with helper functions. Perhaps helper_functions is the best way....
         
-        Inputs: 
+        Args:
+            folds: the number of folds to use
             random_gen: whether to pick random fixations for validation or uniformly distributed
             test_set: whether to set aside first an n-fold test set, and then within the rest n-fold train/val sets
-        Outputs:
+            verbose: whether to print out the number of fixations in each set
+
+        Returns:
             None: sets internal variables test_inds, train_inds, val_inds
         """
         assert self.used_inds is not None, "Must first specify valid_indices before setting up cross-validation."
@@ -543,7 +654,19 @@ class SensoryBase(Dataset):
     # END SensoryBase.crossval_setup
 
     def fold_sample( self, num_items, folds, random_gen=False, which_fold=None):
-        """This really should be a general method not associated with self"""
+        """
+        This really should be a general method not associated with self
+        
+        Args:
+            num_items: the number of items to sample
+            folds: the number of folds to use
+            random_gen: whether to pick random fixations for validation or uniformly distributed
+            which_fold: which fold to use
+
+        Returns:
+            val_items: the validation items
+            rem_items: the remaining items
+        """
         if random_gen:
             num_val = int(num_items/folds)
             tmp_seq = np.random.permutation(num_items)
@@ -562,6 +685,13 @@ class SensoryBase(Dataset):
         """
         Produce data-filter masks for training and XV speckles
         Will be produced for whole dataset, and must be reduced if cells_out used
+
+        Args:
+            folds: the number of folds to use
+            random_gen: whether to pick random fixations for validation or uniformly distributed
+
+        Returns:
+            None
         """
         Ntr = len(self.block_inds)
 
@@ -580,6 +710,17 @@ class SensoryBase(Dataset):
     # END SensoryBase.speckledXV_setup
     
     def set_speckledXV(self, val=True, folds=5, random_gen=False):
+        """
+        Set up speckled cross-validation with data-filter masks
+
+        Args:
+            val: whether to set up speckled cross-validation
+            folds: the number of folds to use
+            random_gen: whether to pick random fixations for validation or uniformly distributed
+
+        Returns:
+            None
+        """
         self.speckled = val
         if val:
             if self.Mval is None:
@@ -599,6 +740,14 @@ class SensoryBase(Dataset):
         Produce generic datasets on device of choice
         device defaults to cuda-0
         If <all> is True, then will make single dataset without XVal
+
+        Args:
+            device: the device to put the datasets on
+            all: whether to use all data
+        
+        Returns:
+            train_ds: the training dataset
+            val_ds: the validation dataset
         """
         from NTdatasets.generic import GenericDataset
 
@@ -644,9 +793,15 @@ class SensoryBase(Dataset):
         """
         get the maximum number of samples that fit in memory -- for GLM/GQM x LBFGS
 
-        Inputs:
-            dataset: the dataset to get the samples from
-            device: the device to put the samples on
+        Args:
+            gpu_n: the gpu number to use
+            history_size: the history size
+            nquad: the number of quadrature points
+            num_cells: the number of cells to use
+            buffer: the buffer to use
+
+        Returns:
+            maxsamples: the maximum number of samples that fit in memory
         """
         if gpu_n == 0:
             device = torch.device('cuda:0')
@@ -673,6 +828,12 @@ class SensoryBase(Dataset):
     # END .get_max_samples
 
     def assemble_stimulus( self, **kwargs ):
+        """
+        This function is meant to be overloaded by child classes
+
+        Returns:
+            None
+        """
         print("SensoryBase: assemble_stimulus not implemented in class child.")
         return
 
@@ -684,7 +845,12 @@ class SensoryBase(Dataset):
 
     @staticmethod
     def is_int( val ):
-        """returns Boolean as to whether val is one of many types of integers"""
+        """
+        Returns a boolean as to whether val is one of many types of integers
+
+        Returns:
+            True if val is an integer, False otherwise
+        """
         if isinstance(val, int) or \
             isinstance(val, np.int32) or isinstance(val, np.int64) or \
             (isinstance(val, np.ndarray) and (len(val.shape) == 0)):
@@ -694,8 +860,16 @@ class SensoryBase(Dataset):
 
     @staticmethod
     def index_to_array( index, max_val ):
-        """This converts any for index to dataset, including slices, and plain ints, into numpy array"""
+        """
+        This converts any for index to dataset, including slices, and plain ints, into numpy array
 
+        Args:
+            index: the index to convert
+            max_val: the maximum value to use
+
+        Returns:
+            index: the converted index
+        """
         if isinstance(index, slice):
             start = index.start
             stop = index.stop

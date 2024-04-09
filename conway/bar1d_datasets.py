@@ -49,7 +49,26 @@ class BarET(SensoryBase):
         #ignore_saccades=True,
         device=torch.device('cpu'),
         maxT = None):
-        """Constructor options"""
+        """
+        Constructor options
+        
+        Args:
+            filenames: list of strings of hdf5 files
+            datadir: directory where files are stored
+            include_MUs: whether to include multi-units
+            time_embed: 0 is no time embedding, 1 is time_embedding with get_item, 2 is pre-time_embedded
+            num_lags: number of lags to include in time-embedding
+            stim_crop: whether to crop stimulus (not implemented)
+            Hstim_shift: how much to shift horizontal stimulus (in bars)
+            Hdiscardzero: whether to discard zero position in horizontal stimulus
+            combine_stim: whether to combine horizontal and vertical stimulus
+            stim_gap: gap between horizontal and vertical stimulus
+            drift_interval: how many trials to anchor each drift term
+            eye_config: 0 = all, 1, 2, and 3 are options (3 = binocular)
+            binocular: whether to include separate filters for each eye
+            device: torch device
+            maxT: maximum time points to load (for debugging)
+        """
 
         super().__init__(
             filenames=filenames, datadir=datadir, 
@@ -250,7 +269,15 @@ class BarET(SensoryBase):
     # END ColorClouds.__init__
 
     def preload_numpy(self):
-        """Note this loads stimulus but does not time-embed"""
+        """
+        Note this loads stimulus but does not time-embed
+        
+        Args:
+            None
+
+        Returns:
+            None: loads into self.stim, self.robs, self.dfs, self.fix_n, self.Xdrift
+        """
 
         NT = self.NT
         NX = self.dims[1]
@@ -319,6 +346,22 @@ class BarET(SensoryBase):
         time_embed=0, num_lags=12, 
         Hshift=0, Hdiscardzero=True, 
         shifts=None, BUF=20):
+        """
+        Assembles stimulus for the dataset
+        -- This will also time-embed the stimulus if requested
+        -- This will also shift the stimulus if requested
+        -- This will also crop the stimulus if requested
+
+        Args:
+            combine_stim: whether to combine horizontal and vertical stimulus
+            stim_crop: whether to crop stimulus (not implemented)
+            time_embed: 0 is no time embedding, 1 is time_embedding with get_item, 2 is pre-time_embedded
+            num_lags: number of lags to include in time-embedding
+            Hshift: how much to shift horizontal stimulus (in bars)
+            Hdiscardzero: whether to discard zero position in horizontal stimulus
+            shifts: shifts to apply to stimulus (if not None)
+            BUF: buffer for shifting stimulus
+        """
 
         if combine_stim is None:
             combine_stim = self.combine_stim
@@ -387,6 +430,12 @@ class BarET(SensoryBase):
     # END BarET.assemble_stimulus()        
 
     def to_tensor(self, device):
+        """
+        Converts all data to tensors
+
+        Args:
+            device: torch device to move data to
+        """
         if isinstance(self.robs, torch.Tensor):
             # then already converted: just moving device
             #self.stimH = self.stimH.to(device)
@@ -410,8 +459,16 @@ class BarET(SensoryBase):
     # END Bar1D.to_tensor
 
     def process_fixations( self, sacc_in=None ):
-        """Processes fixation informatiom from dataset, but also allows new saccade detection
-        to be input and put in the right format within the dataset (main use)"""
+        """
+        Processes fixation informatiom from dataset, but also allows new saccade detection
+        to be input and put in the right format within the dataset (main use).
+        
+        Args:
+            sacc_in: new saccade information to be processed
+
+        Returns:
+            None: sets self.fix_n
+        """
         if sacc_in is None:
             sacc_in = self.sacc_inds[:, 0]
 
@@ -443,6 +500,15 @@ class BarET(SensoryBase):
     # END: Bar1D.process_fixations()
 
     def add_shifter( self, shifts ):
+        """
+        Adds a shifter to the dataset
+
+        Args:
+            shifts: shifts to apply to the stimulus
+
+        Returns:
+            None: sets self.shifts
+        """
         assert len(shifts == self.NT), "Entered shifts is wrong size."
         if not self.with_shifter:
             self.with_shifter = True
@@ -460,6 +526,12 @@ class BarET(SensoryBase):
         Calculates average firing probability across specified inds (or whole dataset)
         -- Note will respect datafilters
         -- will return precalc value to save time if already stored
+
+        Args:
+            inds: indices to calculate across
+
+        Returns:
+            avRs: average firing rates across specified indices
         """
         if inds is None:
             inds = range(self.NT)
@@ -476,8 +548,17 @@ class BarET(SensoryBase):
     # END .avrates()
 
     def apply_data_mask( self, dmask, crange=None ):
-        """For when data_filters (or a section) is modified based on models, and want to apply
-        to the dataset. Ideally would save the original"""
+        """
+        For when data_filters (or a section) is modified based on models, and want to apply
+        to the dataset. Ideally would save the original.
+        
+        Args:
+            dmask: mask to apply to data_filters
+            crange: range of cells to apply to
+
+        Returns:
+            None: sets self.dfs to new data mask
+        """
         if not isinstance(dmask, torch.Tensor):
             dmask = torch.tensor(dmask, dtype=torch.float32)
         if len(dmask.shape) == 1:
@@ -500,14 +581,32 @@ class BarET(SensoryBase):
     # END .apply_data_mask()
 
     def data_mask_revert( self, crange=None ):
+        """
+        Reverts data mask to original
+
+        Args:
+            crange: range of cells to revert
+
+        Returns:
+            None: sets self.dfs to original data mask
+        """
         assert self.dfs_orig is not None, "Nothing to revert"
         self.dfs = deepcopy(self.dfs_orig)
         self.dfs_orig = None
 
     def shift_stim_fixation( self, stim, shift):
-        """Simple shift by integer (rounded shift) and zero padded. Note that this is not in 
+        """
+        Simple shift by integer (rounded shift) and zero padded. Note that this is not in 
         is in units of number of bars, rather than -1 to +1. It assumes the stim
-        has a batch dimension (over a fixation), and shifts the whole stim by the same amount."""
+        has a batch dimension (over a fixation), and shifts the whole stim by the same amount.
+        
+        Args:
+            stim: stimulus to shift
+            shift: amount to shift stimulus
+
+        Returns:
+            shstim: shifted stimulus
+        """
         print('Currently needs to be fixed to work with 2D')
         sh = round(shift)
         shstim = stim.new_zeros(*stim.shape)
@@ -524,7 +623,14 @@ class BarET(SensoryBase):
     def create_valid_indices(self, post_sacc_gap=None):
         """
         This creates self.valid_inds vector that is used for __get_item__ 
-        -- Will default to num_lags following each saccade beginning"""
+        -- Will default to num_lags following each saccade beginning
+        
+        Args:
+            post_sacc_gap: number of lags to ignore after saccade
+
+        Returns:
+            None: sets self.valid_inds
+        """
 
         if post_sacc_gap is None:
             post_sacc_gap = self.num_lags
@@ -544,14 +650,18 @@ class BarET(SensoryBase):
     # END .create_valid_indices
 
     def crossval_setup(self, folds=5, random_gen=False, test_set=False, verbose=False):
-        """This sets the cross-validation indices up We can add featuers here. Many ways to do this
+        """
+        This sets the cross-validation indices up We can add featuers here. Many ways to do this
         but will stick to some standard for now. It sets the internal indices, which can be read out
         directly or with helper functions. Perhaps helper_functions is the best way....
         
-        Inputs: 
+        Args:
+            folds: number of folds to use
             random_gen: whether to pick random fixations for validation or uniformly distributed
             test_set: whether to set aside first an n-fold test set, and then within the rest n-fold train/val sets
-        Outputs:
+            verbose: whether to print out information
+        
+        Returns:
             None: sets internal variables test_inds, train_inds, val_inds
         """
         assert self.used_inds is not None, "Must first specify valid_indices before setting up cross-validation."
@@ -597,7 +707,18 @@ class BarET(SensoryBase):
     # END .crossval_setup()
 
     def fold_sample( self, num_items, folds, random_gen=False):
-        """This really should be a general method not associated with self"""
+        """
+        This really should be a general method not associated with self
+        
+        Args:
+            num_items: number of items to fold
+            folds: number of folds
+            random_gen: whether to randomly sample or uniformly sample
+
+        Returns:
+            val_items: indices of validation items
+            rem_items: indices of remaining items
+        """
         if random_gen:
             num_val = int(num_items/folds)
             tmp_seq = np.random.permutation(num_items)
@@ -610,7 +731,15 @@ class BarET(SensoryBase):
         return val_items, rem_items
 
     def adjust_Xdrift_xval( self ):
-    # Adjust drift matrix to not fit xval parameterz
+        """
+        Adjust drift matrix to not fit xval parameterz
+
+        Args:
+            None
+
+        Returns:
+            None: sets self.Xdrift to adjusted version
+        """
         Xnew = self.Xdrift[:, self.train_blks]
         for ii in range(len(self.val_blks)):
             newpos = self.val_blks[ii] - ii # this will be where lower range is
@@ -723,8 +852,28 @@ class Bar1Dv7(Dataset):
         preload = True,
         eyepos = None, 
         device=torch.device('cpu')):
-        """Constructor options"""
+        """
+        Constructor options
 
+        Args:
+            sess_list: list of sessions to load
+            datadir: directory where data is stored
+            num_lags: number of lags to include in time-embedding
+            stim_crop: whether to crop stimulus (not implemented)
+            Hstim_shift: how much to shift horizontal stimulus (in bars)
+            Hdiscardzero: whether to discard zero position in horizontal stimulus
+            time_embed: 0 is no time embedding, 1 is time_embedding with get_item, 2 is pre-time_embedded
+            folded_lags: whether to fold lags in time-embedding
+            combine_stim: whether to combine horizontal and vertical stimulus
+            stim_gap: gap between horizontal and vertical stimuli
+            drift_interval: how many trials to anchor each drift term
+            eye_config: 0 = all, 1, -1, and 2 are options (2 = binocular)
+            ignore_saccades: whether to ignore saccades
+            include_MUs: whether to include multi-units
+            preload: whether to preload data
+            eyepos: eye position data
+            device: torch device to move data to
+        """
         self.datadir = datadir
         self.sess_list = sess_list
         self.device = device
@@ -1034,7 +1183,15 @@ class Bar1Dv7(Dataset):
     # END ColorClouds.__init__
 
     def preload_numpy(self):
-        """Note this loads stimulus but does not time-embed"""
+        """
+        Note this loads stimulus but does not time-embed
+        
+        Args:
+            None
+
+        Returns:
+            None: sets self.stim, self.robs, self.dfs, self.eyepos, self.frame_times
+        """
 
         NT = self.NT
         NX = self.dims[1]
@@ -1123,6 +1280,12 @@ class Bar1Dv7(Dataset):
     # END Bar1D.preload_numpy()
         
     def to_tensor(self, device):
+        """
+        Converts numpy data to torch tensors and moves to device
+
+        Args:
+            device: torch device to move data to
+        """
         if isinstance(self.stimH, torch.Tensor):
             # then already converted: just moving device
             self.stimH = self.stimH.to(device)
@@ -1146,8 +1309,16 @@ class Bar1Dv7(Dataset):
     # END Bar1D.to_tensor
 
     def process_fixations( self, sacc_in=None ):
-        """Processes fixation informatiom from dataset, but also allows new saccade detection
-        to be input and put in the right format within the dataset (main use)"""
+        """
+        Processes fixation informatiom from dataset, but also allows new saccade detection
+        to be input and put in the right format within the dataset (main use)
+        
+        Args:
+            sacc_in: new saccade information to be processed (if None, will use existing)
+
+        Returns:
+            None: sets self.fix_n
+        """
         if sacc_in is None:
             sacc_in = self.sacc_inds[:, 0]
 
@@ -1179,6 +1350,15 @@ class Bar1Dv7(Dataset):
     # END: Bar1D.process_fixations()
 
     def add_shifter( self, shifts ):
+        """
+        Adds a shifter to the dataset, which can be used to shift the stimulus
+
+        Args:
+            shifts: shifts to be added to the dataset
+
+        Returns:
+            None: sets self.shifts
+        """
         assert len(shifts == self.NT), "Entered shifts is wrong size."
         if not self.with_shifter:
             self.with_shifter = True
@@ -1196,6 +1376,12 @@ class Bar1Dv7(Dataset):
         Calculates average firing probability across specified inds (or whole dataset)
         -- Note will respect datafilters
         -- will return precalc value to save time if already stored
+
+        Args:
+            inds: indices to calculate across
+
+        Returns:
+            avRs: average firing rates across the dataset
         """
         if inds is None:
             inds = range(self.NT)
@@ -1216,8 +1402,17 @@ class Bar1Dv7(Dataset):
     # END .avrates()
 
     def apply_data_mask( self, dmask, crange=None ):
-        """For when data_filters (or a section) is modified based on models, and want to apply
-        to the dataset. Ideally would save the original"""
+        """
+        For when data_filters (or a section) is modified based on models, and want to apply
+        to the dataset. Ideally would save the original
+        
+        Args:
+            dmask: mask to apply to data
+            crange: range of cells to apply mask to
+
+        Returns:
+            None: sets self.dfs to new data mask
+        """
         assert self.preload, "data must be preloaded to apply mask"
         if not isinstance(dmask, torch.Tensor):
             dmask = torch.tensor(dmask, dtype=torch.float32)
@@ -1241,14 +1436,32 @@ class Bar1Dv7(Dataset):
     # END .apply_data_mask()
 
     def data_mask_revert( self, crange=None ):
+        """
+        Reverts data mask to original state
+
+        Args:
+            crange: range of cells to revert mask
+
+        Returns:
+            None: sets self.dfs to original data mask
+        """
         assert self.dfs_orig is not None, "Nothing to revert"
         self.dfs = deepcopy(self.dfs_orig)
         self.dfs_orig = None
 
     def shift_stim_fixation( self, stim, shift):
-        """Simple shift by integer (rounded shift) and zero padded. Note that this is not in 
+        """
+        Simple shift by integer (rounded shift) and zero padded. Note that this is not in 
         is in units of number of bars, rather than -1 to +1. It assumes the stim
-        has a batch dimension (over a fixation), and shifts the whole stim by the same amount."""
+        has a batch dimension (over a fixation), and shifts the whole stim by the same amount.
+        
+        Args:
+            stim: stimulus to shift
+            shift: amount to shift by
+
+        Returns:
+            shstim: shifted stimulus
+        """
         print('Currently needs to be fixed to work with 2D')
         sh = round(shift)
         shstim = stim.new_zeros(*stim.shape)
@@ -1265,7 +1478,14 @@ class Bar1Dv7(Dataset):
     def create_valid_indices(self, post_sacc_gap=None):
         """
         This creates self.valid_inds vector that is used for __get_item__ 
-        -- Will default to num_lags following each saccade beginning"""
+        -- Will default to num_lags following each saccade beginning
+        
+        Args:
+            post_sacc_gap: number of lags to exclude following saccade
+
+        Returns:
+            None: sets self.valid_inds
+        """
 
         if post_sacc_gap is None:
             post_sacc_gap = self.num_lags
@@ -1285,14 +1505,18 @@ class Bar1Dv7(Dataset):
     # END .create_valid_indices
 
     def crossval_setup(self, folds=5, random_gen=False, test_set=False, verbose=False):
-        """This sets the cross-validation indices up We can add featuers here. Many ways to do this
+        """
+        This sets the cross-validation indices up We can add featuers here. Many ways to do this
         but will stick to some standard for now. It sets the internal indices, which can be read out
         directly or with helper functions. Perhaps helper_functions is the best way....
         
-        Inputs: 
+        Args:
+            folds: number of folds to use
             random_gen: whether to pick random fixations for validation or uniformly distributed
             test_set: whether to set aside first an n-fold test set, and then within the rest n-fold train/val sets
-        Outputs:
+            verbose: whether to print out information
+        
+        Returns:
             None: sets internal variables test_inds, train_inds, val_inds
         """
         assert self.used_inds is not None, "Must first specify valid_indices before setting up cross-validation."
@@ -1338,7 +1562,18 @@ class Bar1Dv7(Dataset):
     # END .crossval_setup()
 
     def fold_sample( self, num_items, folds, random_gen=False):
-        """This really should be a general method not associated with self"""
+        """
+        This really should be a general method not associated with self
+        
+        Args:
+            num_items: number of items to fold
+            folds: number of folds
+            random_gen: whether to randomly sample or uniformly sample
+
+        Returns:
+            val_items: indices for validation set
+            rem_items: indices for remaining set
+        """
         if random_gen:
             num_val = int(num_items/folds)
             tmp_seq = np.random.permutation(num_items)
@@ -1351,7 +1586,15 @@ class Bar1Dv7(Dataset):
         return val_items, rem_items
 
     def adjust_Xdrift_xval( self ):
-    # Adjust drift matrix to not fit xval parameterz
+        """
+        Adjust drift matrix to not fit xval parameterz
+
+        Args:
+            None
+
+        Returns:
+            None: sets self.Xdrift to new matrix
+        """
         Xnew = self.Xdrift[:, self.train_blks]
         for ii in range(len(self.val_blks)):
             newpos = self.val_blks[ii] - ii # this will be where lower range is
@@ -1369,9 +1612,15 @@ class Bar1Dv7(Dataset):
         """
         get the maximum number of samples that fit in memory -- for GLM/GQM x LBFGS
 
-        Inputs:
-            dataset: the dataset to get the samples from
-            device: the device to put the samples on
+        Args:
+            gpu_n: which gpu to use
+            history_size: number of time lags
+            nquad: number of quadrature points
+            num_cells: number of cells to use
+            buffer: buffer to leave for other memory
+
+        Returns:
+            maxsamples: maximum number of samples that can fit in memory
         """
         if gpu_n == 0:
             device = torch.device('cuda:0')

@@ -46,7 +46,23 @@ class MultiClouds(SensoryBase):
         eye_contiguous=True, # whether to only use eye_config data that is contiguous 
         cell_lists = None,
         device=torch.device('cpu')):
-        """Constructor options"""
+        """
+        Constructor options
+        
+        Args:
+            filenames (list): list of strings of the filenames to be loaded
+            datadir (str): directory where the data is stored
+            num_lags (int): number of lags to include in the stimulus
+            include_MUs (bool): whether to include multi-units in the dataset
+            drift_interval (int): number of blocks to include in the drift term
+            trial_sample (bool): whether to sample trials for train/val/test
+            luminance_only (bool): whether to only include luminance in the stimulus
+            binocular (bool): whether to include separate filters for each eye
+            eye_config (int): which eye configuration to use (0=all, 1=left, 2=right, 3=binocular)
+            eye_contiguous (bool): whether to only use contiguous eye configurations
+            cell_lists (list): list of lists of cell indices to include in the dataset
+            device (torch.device): device to store the data on
+        """
 
         super().__init__(
             filenames=filenames, datadir=datadir, device=device,
@@ -213,8 +229,16 @@ class MultiClouds(SensoryBase):
     # END MultiClouds.__init__
 
     def read_file_info( self, file_n, filename ):
-        """Initial processing of each file to pull out salient info for building stim and responses"""
+        """
+        Initial processing of each file to pull out salient info for building stim and responses
+        
+        Args:
+            file_n (int): index of the file
+            filename (str): name of the file
 
+        Returns:
+            dict: dictionary of file information
+        """
         f = self.fhandles[file_n]
         NT, NSUs = f['Robs'].shape
         # Check for valid RobsMU
@@ -315,6 +339,16 @@ class MultiClouds(SensoryBase):
     # END MultiClouds.read_file_info()  
 
     def modify_included_cells(self, clists, expt_n=None):
+        """
+        Modify the included cells in the dataset
+
+        Args:
+            clists (list): list of lists of cell indices to include in the dataset
+            expt_n (int): index of the experiment to modify
+
+        Returns:
+            None
+        """
         if expt_n is None:
             expts = np.arange(self.Nexpts)
             assert len(clists) == self.Nexpts, "Number of cell_lists must match number of experiments."
@@ -338,7 +372,16 @@ class MultiClouds(SensoryBase):
     # END MultiClouds.modify_included_cells()
 
     def generate_array_cell_list(self, expt_n=0, which_array=0):
-        """Formula for generating cell list given channel maps and basic eligibility"""
+        """
+        Formula for generating cell list given channel maps and basic eligibility
+        
+        Args:
+            expt_n (int): index of the experiment
+            which_array (int or str): which array to generate the cell list for
+
+        Returns:
+            np.array: array of cell indices
+        """
         #expt_val = np.where( np.sum( self.robs[:, np.arange(cstart, cstart+self.fileNC[expt_n])], axis=0 ) > 10)[0]
 
         # Should only do this if have not already reduced channel list
@@ -364,8 +407,13 @@ class MultiClouds(SensoryBase):
     # END MultiClouds.generate_array_cell_list()
 
     def assemble_robs(self):
-        """Takes current information (robs and dfs) to make robs and dfs (full version)
-        Note this can be replaced by using the spike times explicitly"""
+        """
+        Takes current information (robs and dfs) to make robs and dfs (full version)
+        Note this can be replaced by using the spike times explicitly
+        
+        Returns:
+            None
+        """
 
         self.robs = np.zeros( [self.NT, self.NC], dtype=np.uint8 )
         self.dfs = np.zeros( [self.NT, self.NC], dtype=np.uint8 )
@@ -410,13 +458,25 @@ class MultiClouds(SensoryBase):
     # END MultiClouds.assemble_robs()
 
     def list_expts( self ):
-        """Show filenames with experiment number"""
+        """
+        Show filenames with experiment number
+        """
         for ff in range(self.Nexpts):
             print('  %2d  %s'%(ff, self.filenames[ff]) )
         
     def updateDF( self, expt_n, dfs, reduce_cells=False ):
-        """Import updated DF for given experiment, as numbered (can see with 'list_expts')
-        Will check for neurons with no robs and reduce robs and dataset if reduce_cells=True"""
+        """
+        Import updated DF for given experiment, as numbered (can see with 'list_expts')
+        Will check for neurons with no robs and reduce robs and dataset if reduce_cells=True
+        
+        Args:
+            expt_n (int): index of the experiment
+            dfs (np.array): array of new dfs
+            reduce_cells (bool): whether to reduce the number of cells
+
+        Returns:
+            None
+        """
 
         assert expt_n < self.Nexpts, "updateDF: expt_n too large: not that many experiments"
 
@@ -446,16 +506,36 @@ class MultiClouds(SensoryBase):
     # END MultiClouds.updateDF()
 
     def trialfilter_dfs( self ):
-        """Zeros out dfs at the beginning of trials up to num_lags"""
+        """
+        Zeros out dfs at the beginning of trials up to num_lags
+        
+        Returns:
+            None
+        """
         if self.num_lags > 0:
             for bb in range(len(self.block_inds)):
                 self.dfs[self.block_inds[bb][0] + np.arange(self.num_lags), :] = 0
 
     def assemble_saccade_inds( self ):
+        """
+        Assemble saccade indices for all experiments
+
+        Returns:
+            None
+        """
         print('Currently not implemented -- needs to have microsaccades labeled well with time first')
 
     def is_fixpoint_present( self, boxlim, expt_n ):
-        """Return if any of fixation point is within the box given by top-left to bottom-right corner"""
+        """
+        Return if any of fixation point is within the box given by top-left to bottom-right corner
+        
+        Args:
+            boxlim (list): list of four numbers (top-left, bot-right)
+            expt_n (int): index of the experiment
+
+        Returns:
+            bool: whether the fixation point is present
+        """
         fix_loc = self.file_info[expt_n]['fix_loc']
         if fix_loc is None:
             return False
@@ -479,12 +559,29 @@ class MultiClouds(SensoryBase):
             stim_crop=None,
             LMS=False,
             fixdot=0 ):
-        """This assembles a stimulus from the raw numpy-stored stimuli into self.stim
+        """
+        This assembles a stimulus from the raw numpy-stored stimuli into self.stim
         which_stim: determines what stimulus is assembled from 'ET'=0, 'lam'=1, None
             If none, will need top_corner present: can specify with four numbers (top-left, bot-right)
             or just top_corner and L
         which is torch.tensor on default device
-        stim_wrap: only works if using 'which_stim', and will be [hwrap, vwrap]"""
+        stim_wrap: only works if using 'which_stim', and will be [hwrap, vwrap]
+        
+        Args:
+            expt_n (int): index of the experiment
+            which_stim (int or str): which stimulus to use
+            top_corner (list): top corner of the stimulus
+            L (int): size of the stimulus
+            time_embed (int): time embedding
+            eyepos (np.array): eye position
+            BUF (int): buffer for eye position
+            stim_crop (list): crop the stimulus
+            LMS (bool): whether to use LMS
+            fixdot (int): fixation point
+
+        Returns:
+            None
+        """
 
         #eyepos = shifts   # shifts that is passed in is actually the eye position
 
@@ -660,7 +757,12 @@ class MultiClouds(SensoryBase):
     # END MultiClouds.build_stim()
 
     def assemble_stim( self ):
+        """
+        Assemble stimulus from all experiments into self.stim
 
+        Returns:
+            None
+        """
         self.stim_dims = [3, self.L, self.L, 1]
         if self.luminance_only:
             self.stim_dims[0] = 1
@@ -676,7 +778,16 @@ class MultiClouds(SensoryBase):
     # END MultiClouds.assemble_stimulus()
 
     def time_embedding( self, stim=None, nlags=None ):
-        """Note this overloads SensoryBase because reshapes in full dimensions to handle folded_lags"""
+        """
+        Note this overloads SensoryBase because reshapes in full dimensions to handle folded_lags
+        
+        Args:
+            stim (np.array): stimulus to time-embed
+            nlags (int): number of lags
+
+        Returns:
+            np.array: time-embedded stimulus
+        """
         assert self.stim_dims is not None, "Need to assemble stim before time-embedding."
         if nlags is None:
             nlags = self.num_lags
@@ -708,8 +819,17 @@ class MultiClouds(SensoryBase):
 
     @staticmethod
     def rectangle_overlap_ranges( A, B ):
-        """Figures out ranges to write relevant overlap of B onto A
-        All info is of form [x0, y0, x1, y1]"""
+        """
+        Figures out ranges to write relevant overlap of B onto A
+        All info is of form [x0, y0, x1, y1]
+        
+        Args:
+            A (list): first rectangle
+            B (list): second rectangle
+
+        Returns:
+            dict: dictionary of ranges
+        """
         C, D = np.zeros(4, dtype=np.int64), np.zeros(4, dtype=np.int64)
         for ii in range(2):
             if A[ii] >= B[ii]: 
@@ -742,7 +862,16 @@ class MultiClouds(SensoryBase):
     # END STATIC.rectangle_overlap_ranges
 
     def crop_stim( self, stim0, stim_crop=None ):
-        """Crop existing (torch) stimulus and change relevant variables [x1, x2, y1, y2]"""
+        """
+        Crop existing (torch) stimulus and change relevant variables [x1, x2, y1, y2]
+        
+        Args:
+            stim0 (np.array): stimulus to crop
+            stim_crop (list): crop the stimulus
+
+        Returns:
+            np.array: cropped stimulus
+        """
 
         assert len(stim_crop) == 4, "stim_crop must be of form: [x1, x2, y1, y2]"
         assert len(stim0.shape) >= 4, "STIM_CROP: Will only work for unflattened stimulus"
@@ -779,6 +908,18 @@ class MultiClouds(SensoryBase):
         # END ColorClouds.augment_dfs()
 
     def draw_stim_locations( self, expt_n=0, top_corner=None, L=60, row_height=5.0 ):
+        """
+        Draw stimulus locations for given experiment
+
+        Args:
+            expt_n (int): index of the experiment
+            top_corner (list): top corner of the stimulus
+            L (int): size of the stimulus
+            row_height (float): height of the row
+
+        Returns:
+            None
+        """
         import matplotlib.pyplot as plt
         from matplotlib.patches import Rectangle
 
@@ -826,6 +967,12 @@ class MultiClouds(SensoryBase):
         Calculates average firing probability across specified inds (or whole dataset)
         -- Note will respect datafilters
         -- will return precalc value to save time if already stored
+
+        Args:
+            inds (list): indices to calculate across
+
+        Returns:
+            np.array: average firing rates
         """
         if inds is None:
             inds = range(self.NT)
@@ -852,8 +999,22 @@ class MultiClouds(SensoryBase):
     def shift_stim_oldstyle(
         self, stim=None, pos_shifts=None, metrics=None, metric_threshold=1, ts_thresh=8, fix_n=None,
         shift_times=None ):
-        """Shift stimulus given standard shifting input (TBD)
-        use 'shift-times' if given shifts correspond to range of times"""
+        """
+        Shift stimulus given standard shifting input (TBD)
+        use 'shift-times' if given shifts correspond to range of times
+        
+        Args:
+            stim (np.array): stimulus to shift
+            pos_shifts (np.array): shifts to apply
+            metrics (np.array): metrics to apply
+            metric_threshold (float): metric threshold
+            ts_thresh (int): time threshold
+            fix_n (np.array): fixations
+            shift_times (np.array): times to shift
+
+        Returns:
+            np.array: shifted stimulus
+        """
         NX = self.stim_dims[1]
         nlags = self.stim_dims[3]
 
@@ -945,7 +1106,8 @@ class MultiClouds(SensoryBase):
     def process_fixations(self, sacc_in=None, expt_n=0, 
                           sacc_metrics=None, thresh=None, dur_thresh=8,
                           modify_dfs=False):
-        """Generates fix_n based on existing trial structure and imported fixations. Will only work for specified
+        """
+        Generates fix_n based on existing trial structure and imported fixations. Will only work for specified
         experiment (expt_n variable) and assume timings are based on the beginning of that experiment.
         Output: fix_n
 
@@ -956,6 +1118,17 @@ class MultiClouds(SensoryBase):
         
         Can also use metric criteria to only use fraction of total saccades: sacc_metrics can be amplitude, and 
         sacc_thresh be inclusion criteria (must be greater than sacc_thresh)
+
+        Args:
+            sacc_in (np.array): saccade times
+            expt_n (int): index of the experiment
+            sacc_metrics (np.array): saccade metrics
+            thresh (float): threshold for saccade metrics
+            dur_thresh (int): duration threshold
+            modify_dfs (bool): modify dfs
+
+        Returns:
+            np.array: fixation numbers
         """
 
         assert sacc_in is not None, "Need to enter saccade times"
@@ -1002,7 +1175,18 @@ class MultiClouds(SensoryBase):
 
     @staticmethod 
     def shift_stim( stim, eyepos, input_dims=None, batch_size=5000):
+        """
+        Shift stimulus based on eye position
 
+        Args:
+            stim (np.array): stimulus to shift
+            eyepos (np.array): eye position
+            input_dims (list): input dimensions
+            batch_size (int): batch size
+
+        Returns:
+            np.array: shifted stimulus
+        """
         from torch.utils.data import DataLoader
         from tqdm import tqdm
 
@@ -1037,15 +1221,19 @@ class MultiClouds(SensoryBase):
     
     @staticmethod
     def shift_im( stim, shift, affine=False, mode='nearest', batch_size=None):
-        '''
+        """
         Primary function for shifting the intput stimulus
-        Inputs:
-            stim [Batch x channels x height x width] (use Fold2d to fold lags if necessary)
-            shift [Batch x 2] or [Batch x 4] if translation only or affine
-            affine [Boolean] set to True if using affine transformation
-            mode [str] 'bilinear' (default) or 'nearest'
+        Args:
+            stim: [Batch x channels x height x width] (use Fold2d to fold lags if necessary)
+            shift: [Batch x 2] or [Batch x 4] if translation only or affine
+            affine: [Boolean] set to True if using affine transformation
+            mode: [str] 'bilinear' (default) or 'nearest'
+            batch_size: [int] if None, will use all data at once
             NOTE: mode must be bilinear during fitting otherwise the gradients don't propogate well
-        '''
+
+        Returns:
+            torch.tensor: shifted stimulus
+        """
         import torch.nn.functional as F
 
         batch_size = stim.shape[0]
@@ -1085,9 +1273,15 @@ class MultiClouds(SensoryBase):
         """
         get the maximum number of samples that fit in memory -- for GLM/GQM x LBFGS
 
-        Inputs:
-            dataset: the dataset to get the samples from
-            device: the device to put the samples on
+        Args:
+            gpu_n (int): GPU number
+            history_size (int): history size
+            nquad (int): number of quadrature points
+            num_cells (int): number of cells
+            buffer (float): buffer size
+
+        Returns:
+            int: maximum number of samples
         """
         if gpu_n == 0:
             device = torch.device('cuda:0')
@@ -1115,7 +1309,12 @@ class MultiClouds(SensoryBase):
 
         ### THIS IS NOT USED ANY MORE BUT STILL HAS SOME GOOD CODE INSIDE ###
     def preload_numpy(self):
-        """Note this loads stimulus but does not time-embed"""
+        """
+        Note this loads stimulus but does not time-embed
+        
+        Returns:
+            None
+        """
 
         NT = self.NT
         ''' 
