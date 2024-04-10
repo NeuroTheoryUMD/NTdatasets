@@ -239,6 +239,7 @@ class MultiClouds(SensoryBase):
         Returns:
             dict: dictionary of file information
         """
+
         f = self.fhandles[file_n]
         NT, NSUs = f['Robs'].shape
         # Check for valid RobsMU
@@ -349,6 +350,7 @@ class MultiClouds(SensoryBase):
         Returns:
             None
         """
+
         if expt_n is None:
             expts = np.arange(self.Nexpts)
             assert len(clists) == self.Nexpts, "Number of cell_lists must match number of experiments."
@@ -655,22 +657,61 @@ class MultiClouds(SensoryBase):
 
             # Read in stimuli
             if len(self.fhandles[expt_n]['stimET'].shape) == 1:
-                stimET = None
+                stimET_base = None
             else:
-                stimET = np.array(self.fhandles[expt_n]['stimET'][self.tranges[expt_n], ...], dtype=np.int8)
+                stimET_base = np.array(self.fhandles[expt_n]['stimET'][self.tranges[expt_n], ...], dtype=np.int8)
             
             locsET = self.file_info[expt_n]['stim_locsET']
-            stimLP = np.array(self.fhandles[expt_n]['stim'][self.tranges[expt_n], ...], dtype=np.int8)
+            stimLP_base = np.array(self.fhandles[expt_n]['stim'][self.tranges[expt_n], ...], dtype=np.int8)
             locsLP = self.file_info[expt_n]['stim_locsLP']
+            fhandle = self.fhandles[expt_n]
+            sz = fhandle['stim'].shape
+            inds = np.arange(sz[0], dtype=np.int64)
 
-            if self.luminance_only:
-                if stimET is not None:
-                    stimET = stimET[:, 0, ...][:, None, ...]  # maintain 2nd dim (length 1)
-                stimLP = stimLP[:, 0, ...][:, None, ...]
-                num_clr = 1
+            #stimET_base = np.array(self.fhandles[expt_n]['stimET'][self.tranges[expt_n], ...], dtype=np.int8)
+            #stimLP_base = np.array(self.fhandles[expt_n]['stim'][self.tranges[expt_n], ...], dtype=np.int8)
+            #locsET = self.file_info[expt_n]['stim_locsET']
+            #locsLP = self.file_info[expt_n]['stim_locsLP']
+            if self.binocular:
+                Lpresent = np.array(fhandle['useLeye'], dtype=int)[:,0]
+                Rpresent = np.array(fhandle['useReye'], dtype=int)[:,0]
+                LRpresent = Lpresent + 2*Rpresent
+                Leye = inds[LRpresent[inds] != 2]
+                Reye = inds[LRpresent[inds] != 1]
+                self.binocular_gain = torch.zeros( [len(LRpresent), 2], dtype=torch.float32 )
+                self.binocular_gain[LRpresent == 1, 0] = 1.0
+                self.binocular_gain[LRpresent == 2, 1] = 1.0
+                if self.luminance_only: 
+                    num_clr = 2
+                    #empty_stimET=np.zeros((np.shape(stimET)[0], 2, np.shape(stimET)[2], np.shape(stimET)[3]))
+                    stimLP=np.zeros((np.shape(stimLP_base)[0], 2, np.shape(stimLP_base)[2], np.shape(stimLP_base)[3]))
+                    stimLP[Leye, 0, ...] = np.array(fhandle['stim'], dtype=np.float32)[Leye, 0, ...]
+                    stimLP[Reye, 1, ...] = np.array(fhandle['stim'], dtype=np.float32)[Reye, 0, ...]
+                    if stimET_base is not None:
+                        stimET=np.zeros((np.shape(stimET_base)[0], 2, np.shape(stimET_base)[2], np.shape(stimET_base)[3]))
+                        stimET[Leye, 0, ...] = np.array(fhandle['stimET'], dtype=np.float32)[Leye, 0, ...]
+                        stimET[Reye, 1, ...] = np.array(fhandle['stimET'], dtype=np.float32)[Reye, 0, ...]
+                else:
+                    num_clr = 6
+                    stimLP = np.zeros((np.shape(stimLP_base)[0], 6, np.shape(stimLP_base)[2], np.shape(stimLP_base)[3]))
+                    stimLP[Leye, 0:3, ...] = np.array(fhandle['stim'], dtype=np.float32)[Leye, ...]
+                    stimLP[Reye, 3:6, ...] = np.array(fhandle['stim'], dtype=np.float32)[Reye, ...]
+                    if stimET_base is not None:
+                        stimET=np.zeros((np.shape(stimET_base)[0], 6, np.shape(stimET_base)[2], np.shape(stimET_base)[3]))
+                        stimET[Leye, 0:3, ...] = np.array(fhandle['stimET'], dtype=np.float32)[Leye, ...]
+                        stimET[Reye, 3:6, ...] = np.array(fhandle['stimET'], dtype=np.float32)[Reye, ...]
             else:
-                num_clr = 3
-
+                #stimET=stimET_base
+                stimLP=stimLP_base
+                if stimET_base is not None:
+                    stimET=stimET_base
+                    if self.luminance_only:
+                        if stimET_base is not None: 
+                            stimET = stimET[:, 0, ...][:, None, ...]  # maintain 2nd dim (length 1)
+                        stimLP = stimLP[:, 0, ...][:, None, ...]
+                        num_clr = 1
+                    else:
+                        num_clr = 3             
             NT = self.fileNT[expt_n]
             newstim = np.zeros( [NT, num_clr, L, L], dtype=np.int8 )
             for ii in range(locsLP.shape[1]):
@@ -715,7 +756,23 @@ class MultiClouds(SensoryBase):
             print('  Shifting stim...')
             if len(eyepos) > newstim.shape[0]:
                 eyepos = eyepos[self.tranges[expt_n]]
-            newstim = self.shift_stim( newstim, eyepos )
+            if len(eyepos) < newstim.shape[0] and self.binocular:
+                eyepos_padded=np.zeros((newstim.shape[0], 2))
+                Lpresent = np.array(fhandle['useLeye'], dtype=int)[:,0]
+                Rpresent = np.array(fhandle['useReye'], dtype=int)[:,0]
+                LRpresent = Lpresent + 2*Rpresent
+                bin_inds=inds[np.where(LRpresent[inds]==3)]
+                if len(bin_inds)!=len(eyepos):
+                    eyepos_padded[bin_inds[0]:bin_inds[0]+len(eyepos)]=eyepos #Off by one errors, probably. 
+                else:
+                    eyepos_padded[bin_inds]=eyepos
+                eyepos=eyepos_padded 
+            if num_clr==6: 
+                
+                newstim = self.shift_stim( newstim, eyepos, batch_size=10)
+            else:
+                newstim=self.shift_stim(newstim, eyepos) 
+    
 
         # Reduce size back to original If expanded to handle shifts
         if need2crop:
@@ -763,9 +820,12 @@ class MultiClouds(SensoryBase):
         Returns:
             None
         """
+
         self.stim_dims = [3, self.L, self.L, 1]
         if self.luminance_only:
             self.stim_dims[0] = 1
+        if self.binocular:
+            self.stim_dims[0]=2*self.stim_dims[0]
         if self.time_embed:
             self.stim_dims[3] = self.num_lags
         num_dims = np.prod(self.stim_dims)
@@ -789,6 +849,7 @@ class MultiClouds(SensoryBase):
             np.array: time-embedded stimulus
         """
         assert self.stim_dims is not None, "Need to assemble stim before time-embedding."
+
         if nlags is None:
             nlags = self.num_lags
         #if self.stim_dims[3] == 1:
@@ -830,6 +891,7 @@ class MultiClouds(SensoryBase):
         Returns:
             dict: dictionary of ranges
         """
+
         C, D = np.zeros(4, dtype=np.int64), np.zeros(4, dtype=np.int64)
         for ii in range(2):
             if A[ii] >= B[ii]: 
@@ -920,6 +982,7 @@ class MultiClouds(SensoryBase):
         Returns:
             None
         """
+
         import matplotlib.pyplot as plt
         from matplotlib.patches import Rectangle
 
