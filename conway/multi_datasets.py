@@ -655,6 +655,11 @@ class MultiClouds(SensoryBase):
                 print( "  Stim expansion for shift:", stim_pos)
                 L += 2*BUF
 
+            if self.luminance_only:
+                num_clr = 1
+            else:
+                num_clr = 3
+
             # Read in stimuli
             if len(self.fhandles[expt_n]['stimET'].shape) == 1:
                 stimET_base = None
@@ -673,6 +678,7 @@ class MultiClouds(SensoryBase):
             #locsET = self.file_info[expt_n]['stim_locsET']
             #locsLP = self.file_info[expt_n]['stim_locsLP']
             if self.binocular:
+                num_clr *= 2  # make binocular be like just 2x more colors (channel dim)
                 Lpresent = np.array(fhandle['useLeye'], dtype=int)[:,0]
                 Rpresent = np.array(fhandle['useReye'], dtype=int)[:,0]
                 LRpresent = Lpresent + 2*Rpresent
@@ -682,7 +688,7 @@ class MultiClouds(SensoryBase):
                 self.binocular_gain[LRpresent == 1, 0] = 1.0
                 self.binocular_gain[LRpresent == 2, 1] = 1.0
                 if self.luminance_only: 
-                    num_clr = 2
+                    #num_clr = 2
                     #empty_stimET=np.zeros((np.shape(stimET)[0], 2, np.shape(stimET)[2], np.shape(stimET)[3]))
                     stimLP=np.zeros((np.shape(stimLP_base)[0], 2, np.shape(stimLP_base)[2], np.shape(stimLP_base)[3]))
                     stimLP[Leye, 0, ...] = np.array(fhandle['stim'], dtype=np.float32)[Leye, 0, ...]
@@ -692,7 +698,7 @@ class MultiClouds(SensoryBase):
                         stimET[Leye, 0, ...] = np.array(fhandle['stimET'], dtype=np.float32)[Leye, 0, ...]
                         stimET[Reye, 1, ...] = np.array(fhandle['stimET'], dtype=np.float32)[Reye, 0, ...]
                 else:
-                    num_clr = 6
+                    #num_clr = 6
                     stimLP = np.zeros((np.shape(stimLP_base)[0], 6, np.shape(stimLP_base)[2], np.shape(stimLP_base)[3]))
                     stimLP[Leye, 0:3, ...] = np.array(fhandle['stim'], dtype=np.float32)[Leye, ...]
                     stimLP[Reye, 3:6, ...] = np.array(fhandle['stim'], dtype=np.float32)[Reye, ...]
@@ -709,9 +715,6 @@ class MultiClouds(SensoryBase):
                         if stimET_base is not None: 
                             stimET = stimET[:, 0, ...][:, None, ...]  # maintain 2nd dim (length 1)
                         stimLP = stimLP[:, 0, ...][:, None, ...]
-                        num_clr = 1
-                    else:
-                        num_clr = 3             
             NT = self.fileNT[expt_n]
             newstim = np.zeros( [NT, num_clr, L, L], dtype=np.int8 )
             for ii in range(locsLP.shape[1]):
@@ -767,12 +770,10 @@ class MultiClouds(SensoryBase):
                 else:
                     eyepos_padded[bin_inds]=eyepos
                 eyepos=eyepos_padded 
-            if num_clr==6: 
-                
+            if num_clr == 6:                 
                 newstim = self.shift_stim( newstim, eyepos, batch_size=10)
             else:
-                newstim=self.shift_stim(newstim, eyepos) 
-    
+                newstim = self.shift_stim(newstim, eyepos) 
 
         # Reduce size back to original If expanded to handle shifts
         if need2crop:
