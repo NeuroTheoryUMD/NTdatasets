@@ -42,7 +42,22 @@ class Bar1D(Dataset):
         preload = True,
         eyepos = None, 
         device=torch.device('cpu')):
-        """Constructor options"""
+        """
+        Constructor options.
+
+        Args:
+            sess_list: list of strings of session names
+            datadir: directory where data is stored
+            num_lags: number of lags to include in stimulus
+            stim_crop: cropping of stimulus
+            time_embed: 0 is no time embedding, 1 is time_embedding with get_item, 2 is pre-time_embedded
+            folded_lags: whether to fold lags into channel dimension
+            ignore_saccades: whether to ignore saccades in the data
+            include_MUs: whether to include multi-units in the data
+            preload: whether to preload data into memory
+            eyepos: eye position data
+            device: device to put data on
+        """
 
         self.datadir = datadir
         self.sess_list = sess_list
@@ -260,7 +275,15 @@ class Bar1D(Dataset):
     # END ColorClouds.__init__
 
     def preload_numpy(self):
-        """Note this loads stimulus but does not time-embed"""
+        """
+        Note this loads stimulus but does not time-embed.
+
+        Args:
+            None
+
+        Returns:
+            None: sets self.stim, self.robs, self.dfs, self.eyepos, self.frame_times
+        """
 
         NT = self.NT
         ''' 
@@ -347,6 +370,12 @@ class Bar1D(Dataset):
         Calculates average firing probability across specified inds (or whole dataset)
         -- Note will respect datafilters
         -- will return precalc value to save time if already stored
+
+        Args:
+            inds: indices to calculate average rates over
+
+        Returns:
+            avRs: average firing rates across specified indices
         """
         if inds is None:
             inds = range(self.NT)
@@ -367,9 +396,18 @@ class Bar1D(Dataset):
     # END .avrates()
 
     def shift_stim_fixation( self, stim, shift):
-        """Simple shift by integer (rounded shift) and zero padded. Note that this is not in 
+        """
+        Simple shift by integer (rounded shift) and zero padded. Note that this is not in 
         is in units of number of bars, rather than -1 to +1. It assumes the stim
-        has a batch dimension (over a fixation), and shifts the whole stim by the same amount."""
+        has a batch dimension (over a fixation), and shifts the whole stim by the same amount.
+        
+        Args:
+            stim: stimulus tensor to shift
+            shift: amount to shift by (in units of bars)
+
+        Returns:
+            shstim: shifted stimulus tensor
+        """
         print('Currently needs to be fixed to work with 2D')
         sh = round(shift)
         shstim = stim.new_zeros(*stim.shape)
@@ -386,7 +424,14 @@ class Bar1D(Dataset):
     def create_valid_indices(self, post_sacc_gap=None):
         """
         This creates self.valid_inds vector that is used for __get_item__ 
-        -- Will default to num_lags following each saccade beginning"""
+        -- Will default to num_lags following each saccade beginning
+        
+        Args:
+            post_sacc_gap: number of lags to ignore following each saccade
+
+        Returns:
+            None: sets self.valid_inds
+        """
 
         if post_sacc_gap is None:
             post_sacc_gap = self.num_lags
@@ -406,14 +451,18 @@ class Bar1D(Dataset):
     # END .create_valid_indices
 
     def crossval_setup(self, folds=5, random_gen=False, test_set=True, verbose=False):
-        """This sets the cross-validation indices up We can add featuers here. Many ways to do this
+        """
+        This sets the cross-validation indices up We can add featuers here. Many ways to do this
         but will stick to some standard for now. It sets the internal indices, which can be read out
         directly or with helper functions. Perhaps helper_functions is the best way....
         
-        Inputs: 
+        Args: 
+            folds: number of folds to partition data into
             random_gen: whether to pick random fixations for validation or uniformly distributed
             test_set: whether to set aside first an n-fold test set, and then within the rest n-fold train/val sets
-        Outputs:
+            verbose: whether to print out information about the partitioning
+
+        Returns:
             None: sets internal variables test_inds, train_inds, val_inds
         """
         assert self.valid_inds is not None, "Must first specify valid_indices before setting up cross-validation."
@@ -459,7 +508,18 @@ class Bar1D(Dataset):
     # END MultiDatasetFix.crossval_setup
 
     def fold_sample( self, num_items, folds, random_gen=False):
-        """This really should be a general method not associated with self"""
+        """
+        This really should be a general method not associated with self.
+        
+        Args:
+            num_items: number of items to partition
+            folds: number of folds to partition into
+            random_gen: whether to randomly partition or not
+
+        Returns:
+            val_items: indices of items to be used for validation
+            rem_items: indices of items to be used for remainder
+        """
         if random_gen:
             num_val = int(num_items/folds)
             tmp_seq = np.random.permutation(num_items)
@@ -475,9 +535,12 @@ class Bar1D(Dataset):
         """
         get the maximum number of samples that fit in memory -- for GLM/GQM x LBFGS
 
-        Inputs:
+        Args:
             dataset: the dataset to get the samples from
             device: the device to put the samples on
+
+        Returns:
+            maxsamples: the maximum number of samples that can fit on the device
         """
         if gpu_n == 0:
             device = torch.device('cuda:0')

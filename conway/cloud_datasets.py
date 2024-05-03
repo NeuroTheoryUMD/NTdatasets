@@ -51,7 +51,27 @@ class ColorClouds(SensoryBase):
         binocular = False, # whether to include separate filters for each eye
         eye_config = 2,  # 0 = all, 1, -1, and 2 are options (2 = binocular)
         maxT = None):
-        """Constructor options"""
+        """
+        Constructor options
+        
+        Args:
+            filenames (list): list of strings with filenames (without .mat) to load
+            datadir (str): directory where data is stored
+            time_embed (int): 0, 1, or 2. 0 is no time embedding, 1 is time_embedding with get_item, 2 is pre-time_embedded
+            num_lags (int): number of lags to use in time-embedding
+            include_MUs (bool): whether to include MUs in the dataset
+            drift_interval (int): number of blocks to include in drift term
+            trial_sample (bool): whether to sample trials randomly
+            device (torch.device): device to store data on
+            which_stim (str or int): 'et' or 0, or 1 for lam, but default assemble later
+            stim_crop (list): should be list/array of 4 numbers representing inds of edges
+            luminance_only (bool): whether to use only luminance channel
+            ignore_saccades (bool): whether to ignore saccades
+            folded_lags (bool): whether to fold lags into channels
+            binocular (bool): whether to include separate filters for each eye
+            eye_config (int): 0 = all, 1, -1, and 2 are options (2 = binocular)
+            maxT (int): maximum number of time points to include
+        """
 
         super().__init__(
             filenames=filenames, datadir=datadir, 
@@ -336,7 +356,15 @@ class ColorClouds(SensoryBase):
     # END ColorClouds.__init__
 
     def preload_numpy(self):
-        """Note this loads stimulus but does not time-embed"""
+        """
+        Note this loads stimulus but does not time-embed
+        
+        Args:
+            None
+
+        Returns:
+            None
+        """
 
         NT = self.NT
         ''' 
@@ -465,12 +493,32 @@ class ColorClouds(SensoryBase):
         shift_times=None, # So that can put partial-shifts over time range in stimulus
         LMS=False,  # if false, translate to cone-isolating stimulus 
         fixdot=0 ):
-        """This assembles a stimulus from the raw numpy-stored stimuli into self.stim
+        """
+        This assembles a stimulus from the raw numpy-stored stimuli into self.stim
         which_stim: determines what stimulus is assembled from 'ET'=0, 'lam'=1, None
             If none, will need top_corner present: can specify with four numbers (top-left, bot-right)
             or just top_corner and L
         which is torch.tensor on default device
-        stim_wrap: only works if using 'which_stim', and will be [hwrap, vwrap]"""
+        stim_wrap: only works if using 'which_stim', and will be [hwrap, vwrap]
+        
+        Args:
+            which_stim (int): 0 for ET, 1 for laminar probe, None for assembly from top_corner
+            stim_wrap (list): [hwrap, vwrap] for wrapping stimulus
+            stim_crop (list): [x1, x2, y1, y2] for cropping stimulus
+            top_corner (list): [x1, y1] for top corner of stimulus
+            L (int): length of stimulus
+            time_embed (int): number of time lags to embed
+            num_lags (int): number of lags to use
+            luminance_only (bool): whether to use only luminance channel
+            shifts (list): [dx, dy] for shifting stimulus
+            BUF (int): buffer for shifting stimulus
+            shift_times (list): times to shift stimulus
+            LMS (bool): whether to convert to cone-isolating stimulus
+            fixdot (int): value for fixation point
+
+        Returns:
+            None
+        """
 
         # Delete existing stim and clear cache to prevent memory issues on GPU
         if self.stim is not None:
@@ -632,6 +680,15 @@ class ColorClouds(SensoryBase):
     # END ColorClouds.assemble_stimulus()
 
     def to_tensor(self, device):
+        """
+        Converts all relevant data to torch.tensor on device
+
+        Args:
+            device (torch.device): device to move data to
+
+        Returns:
+            None
+        """
         if isinstance(self.robs, torch.Tensor):
             # then already converted: just moving device
             #self.stim = self.stim.to(device)
@@ -649,7 +706,16 @@ class ColorClouds(SensoryBase):
                 self.Xdrift = torch.tensor(self.Xdrift, dtype=torch.float32, device=device)
 
     def time_embedding( self, stim=None, nlags=None ):
-        """Note this overloads SensoryBase because reshapes in full dimensions to handle folded_lags"""
+        """
+        Note this overloads SensoryBase because reshapes in full dimensions to handle folded_lags
+        
+        Args:
+            stim (torch.tensor): stimulus to time-embed
+            nlags (int): number of lags to use
+
+        Returns:
+            torch.tensor: time-embedded stimulus
+        """
         assert self.stim_dims is not None, "Need to assemble stim before time-embedding."
         if nlags is None:
             nlags = self.num_lags
@@ -686,8 +752,17 @@ class ColorClouds(SensoryBase):
 
     @staticmethod
     def rectangle_overlap_ranges( A, B ):
-        """Figures out ranges to write relevant overlap of B onto A
-        All info is of form [x0, y0, x1, y1]"""
+        """
+        Figures out ranges to write relevant overlap of B onto A
+        All info is of form [x0, y0, x1, y1]
+        
+        Args:
+            A (list): [x0, y0, x1, y1]
+            B (list): [x0, y0, x1, y1]
+
+        Returns:
+            dict: ranges to write to A from B
+        """
         C, D = np.zeros(4, dtype=np.int64), np.zeros(4, dtype=np.int64)
         for ii in range(2):
             if A[ii] >= B[ii]: 
@@ -719,8 +794,17 @@ class ColorClouds(SensoryBase):
         return ranges
 
     def wrap_stim( self, vwrap=0, hwrap=0 ):
-        """Take existing stimulus and move the whole thing around in horizontal and/or vertical dims,
-        including if time_embedded"""
+        """
+        Take existing stimulus and move the whole thing around in horizontal and/or vertical dims,
+        including if time_embedded
+        
+        Args:
+            vwrap (int): vertical wrap
+            hwrap (int): horizontal wrap
+
+        Returns:
+            None
+        """
 
         assert self.stim is not None, "Must assemble the stimulus before using wrap_stim."
         orig_stim_dims = len(self.stim.shape)
@@ -763,7 +847,15 @@ class ColorClouds(SensoryBase):
     # END .wrap_stim()
 
     def crop_stim( self, stim_crop=None ):
-        """Crop existing (torch) stimulus and change relevant variables [x1, x2, y1, y2]"""
+        """
+        Crop existing (torch) stimulus and change relevant variables [x1, x2, y1, y2]
+        
+        Args:
+            stim_crop (list): [x1, x2, y1, y2]
+
+        Returns:
+            None
+        """
         if stim_crop is None:
             stim_crop = self.stim_crop
         else:
@@ -793,8 +885,16 @@ class ColorClouds(SensoryBase):
     # END .crop_stim()
 
     def process_fixations( self, sacc_in=None ):
-        """Processes fixation informatiom from dataset, but also allows new saccade detection
-        to be input and put in the right format within the dataset (main use)"""
+        """
+        Processes fixation informatiom from dataset, but also allows new saccade detection
+        to be input and put in the right format within the dataset (main use)
+        
+        Args:
+            sacc_in (np.ndarray): saccade times
+
+        Returns:
+            None
+        """
         if sacc_in is None:
             sacc_in = self.sacc_inds[:, 0]
         else:
@@ -833,7 +933,16 @@ class ColorClouds(SensoryBase):
     # END: ColorClouds.process_fixations()
 
     def augment_dfs( self, new_dfs, cells=None ):
-        """Replaces data-filter for given cells. note that new_df should be np.ndarray"""
+        """
+        Replaces data-filter for given cells. note that new_df should be np.ndarray
+        
+        Args:
+            new_dfs (np.ndarray): new datafilters
+            cells (list): cells to replace datafilters for
+
+        Returns:
+            None
+        """
         
         NTdf, NCdf = new_dfs.shape 
         if cells is None:
@@ -852,6 +961,17 @@ class ColorClouds(SensoryBase):
         # END ColorClouds.replace_dfs()
 
     def draw_stim_locations( self, top_corner=None, L=None, row_height=5.0 ):
+        """
+        Draws stimulus locations
+
+        Args:
+            top_corner (list): top corner of stimulus
+            L (int): length of stimulus
+            row_height (float): height of row
+
+        Returns:
+            None
+        """
         import matplotlib.pyplot as plt
         from matplotlib.patches import Rectangle
 
@@ -898,6 +1018,12 @@ class ColorClouds(SensoryBase):
         Calculates average firing probability across specified inds (or whole dataset)
         -- Note will respect datafilters
         -- will return precalc value to save time if already stored
+
+        Args:
+            inds (list): indices to calculate across
+
+        Returns:
+            np.ndarray: average firing rates
         """
         if inds is None:
             inds = range(self.NT)
@@ -920,8 +1046,21 @@ class ColorClouds(SensoryBase):
     def shift_stim(
         self, pos_shifts, metrics=None, metric_threshold=1, ts_thresh=8,
         shift_times=None, already_lagged=True ):
-        """Shift stimulus given standard shifting input (TBD)
-        use 'shift-times' if given shifts correspond to range of times"""
+        """
+        Shift stimulus given standard shifting input (TBD)
+        use 'shift-times' if given shifts correspond to range of times
+        
+        Args:
+            pos_shifts (np.ndarray): shifts to apply
+            metrics (np.ndarray): metric to apply threshold
+            metric_threshold (float): threshold for metric
+            ts_thresh (int): threshold for number of timepoints
+            shift_times (list): times to shift stimulus
+            already_lagged (bool): whether stimulus is already lagged
+
+        Returns:
+            np.ndarray: shifted stimulus
+        """
         NX = self.stim_dims[1]
         nlags = self.stim_dims[3]
 
@@ -1000,9 +1139,18 @@ class ColorClouds(SensoryBase):
     # END ColorCloud.shift_stim -- note outputs stim rather than overwrites
 
     def shift_stim_fixation( self, stim, shift):
-        """Simple shift by integer (rounded shift) and zero padded. Note that this is not in 
+        """
+        Simple shift by integer (rounded shift) and zero padded. Note that this is not in 
         is in units of number of bars, rather than -1 to +1. It assumes the stim
-        has a batch dimension (over a fixation), and shifts the whole stim by the same amount."""
+        has a batch dimension (over a fixation), and shifts the whole stim by the same amount.
+        
+        Args:
+            stim (torch.tensor): stimulus to shift
+            shift (float): shift amount
+
+        Returns:
+            torch.tensor: shifted stimulus
+        """
         print('Currently needs to be fixed to work with 2D')
         sh = round(shift)
         shstim = stim.new_zeros(*stim.shape)
@@ -1019,7 +1167,14 @@ class ColorClouds(SensoryBase):
     def create_valid_indices(self, post_sacc_gap=None):
         """
         This creates self.valid_inds vector that is used for __get_item__ 
-        -- Will default to num_lags following each saccade beginning"""
+        -- Will default to num_lags following each saccade beginning
+        
+        Args:
+            post_sacc_gap (int): gap following saccade
+
+        Returns:
+            None
+        """
 
         if post_sacc_gap is None:
             post_sacc_gap = self.num_lags
@@ -1043,10 +1198,13 @@ class ColorClouds(SensoryBase):
         but will stick to some standard for now. It sets the internal indices, which can be read out
         directly or with helper functions. Perhaps helper_functions is the best way....
         
-        Inputs: 
+        Args:
+            folds: number of folds 
             random_gen: whether to pick random fixations for validation or uniformly distributed
             test_set: whether to set aside first an n-fold test set, and then within the rest n-fold train/val sets
-        Outputs:
+            verbose: whether to print out information
+
+        Returns:
             None: sets internal variables test_inds, train_inds, val_inds
         """
         assert self.valid_inds is not None, "Must first specify valid_indices before setting up cross-validation."
@@ -1095,9 +1253,15 @@ class ColorClouds(SensoryBase):
         """
         get the maximum number of samples that fit in memory -- for GLM/GQM x LBFGS
 
-        Inputs:
-            dataset: the dataset to get the samples from
-            device: the device to put the samples on
+        Args:
+            gpu_n (int): gpu number
+            history_size (int): history size
+            nquad (int): number of quadrature points
+            num_cells (int): number of cells
+            buffer (float): buffer size
+
+        Returns:
+            int: maximum number of samples that fit in memory
         """
         if gpu_n == 0:
             device = torch.device('cuda:0')

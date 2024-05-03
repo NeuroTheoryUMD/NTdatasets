@@ -4,16 +4,17 @@ from torch.utils.data import Dataset
 
 
 class GenericDataset(Dataset):
-    '''
+    """
     Generic Dataset can be used to create a quick pytorch dataset from a dictionary of tensors
-    
-    Inputs:
-        Data: Dictionary of tensors. Each key will be a covariate for the dataset.
-        device: Device to put each tensor on. Default is cpu.
-    '''
+    """
     def __init__(self,
         data,
         device=None):
+        """
+        Args:
+            data: Dictionary of tensors. Each key will be a covariate for the dataset.
+            device: Device to put each tensor on. Default is cpu.
+        """
 
         self.covariates = {}
         for cov in list(data.keys()):

@@ -27,6 +27,23 @@ class HartleyDataset(SensoryBase):
                  eye_config=0,               # 0 = no subsampling, 1(left), 2(right), and 3(binocular) are options
                  maxT=None):
                  #meta_vals = 4):
+        """
+        Class for Hartley dataset
+
+        Args:
+            filenames (list): List of strings of filenames to load
+            datadir (str): Directory where data is stored
+            time_embed (int): Time embedding of stimulus
+            num_lags (int): Number of lags for time embedding
+            include_MUs (bool): Include multi-units in dataset
+            drift_interval (int): Interval for drift term
+            trial_sample (bool): Sample trials for cross-validation
+            device (torch.device): Device for pytorch tensors
+            ignore_saccades (bool): Ignore saccades in dataset
+            binocular (bool): Include binocular data
+            eye_config (int): Eye configuration for dataset
+            maxT (int): Maximum number of time points to load
+        """
     
         super().__init__(
             filenames=filenames, datadir=datadir, 
@@ -243,6 +260,12 @@ class HartleyDataset(SensoryBase):
 
     # Develop default train, validation, and test datasets 
     def crossval_setup(self):
+        """
+        Setup cross-validation indices
+
+        Returns:
+            None
+        """
         vblks, trblks = self.fold_sample(len(self.block_inds), 5, random_gen=False)
         self.train_inds = []
         for nn in trblks:
@@ -263,7 +286,12 @@ class HartleyDataset(SensoryBase):
     # END .crossval_setup()
 
     def preload_numpy(self):
-        """Note this loads stimulus but does not time-embed"""
+        """
+        Note this loads stimulus but does not time-embed
+        
+        Returns:
+            None
+        """
 
         NT = self.NT
         ''' 
@@ -316,6 +344,15 @@ class HartleyDataset(SensoryBase):
     # END .preload_numpy()
 
     def to_tensor(self, device):
+        """
+        Convert numpy arrays to pytorch tensors
+
+        Args:
+            device (torch.device): Device for pytorch tensors
+
+        Returns:
+            None
+        """
         if isinstance(self.robs, torch.Tensor):
             # then already converted: just moving device
             self.robs = self.robs.to(device)
@@ -332,7 +369,15 @@ class HartleyDataset(SensoryBase):
     # END .to_tensor()
 
     def is_fixpoint_present( self, boxlim ):
-        """Return if any of fixation point is within the box given by top-left to bottom-right corner"""
+        """
+        Return if any of fixation point is within the box given by top-left to bottom-right corner
+        
+        Args:
+            boxlim (list): List of top-left and bottom-right corner of box
+
+        Returns:
+            bool: True if fixation point is within box, False otherwise
+        """
         if self.fix_location is None:
             return False
         fix_present = True
@@ -347,7 +392,16 @@ class HartleyDataset(SensoryBase):
     # END .is_fixpoint_present()
 
     def assemble_metadata(self, time_embed=0, num_lags=10):
-        """ This assembles the Hartley metadata from the raw numpy-stored metadata into self.meta """
+        """
+        This assembles the Hartley metadata from the raw numpy-stored metadata into self.meta
+        
+        Args:
+            time_embed (int): Time embedding of metadata
+            num_lags (int): Number of lags for time embedding
+
+        Returns:
+            None
+        """
         
         # Delete existing metadata and clear cache to prevent memory issues on GPU
         if self.meta is not None:
@@ -430,8 +484,16 @@ class HartleyDataset(SensoryBase):
     # END .assemble_metadata()
 
     def process_fixations( self, sacc_in=None ):
-        """Processes fixation informatiom from dataset, but also allows new saccade detection
-        to be input and put in the right format within the dataset (main use)"""
+        """
+        Processes fixation informatiom from dataset, but also allows new saccade detection
+        to be input and put in the right format within the dataset (main use)
+        
+        Args:
+            sacc_in (np.ndarray): Saccade indices
+
+        Returns:
+            None
+        """
         if sacc_in is None:
             sacc_in = self.sacc_inds[:, 0]
         else:
@@ -470,7 +532,16 @@ class HartleyDataset(SensoryBase):
     # END .process_fixations()
 
     def augment_dfs( self, new_dfs, cells=None ):
-        """Replaces data-filter for given cells. note that new_df should be np.ndarray"""
+        """
+        Replaces data-filter for given cells. note that new_df should be np.ndarray
+        
+        Args:
+            new_dfs (np.ndarray): New data-filters
+            cells (list): List of cells to replace data-filters
+
+        Returns:
+            None
+        """
         
         NTdf, NCdf = new_dfs.shape 
         if cells is None:
@@ -489,6 +560,17 @@ class HartleyDataset(SensoryBase):
     # END .augment_dfs()
 
     def draw_stim_locations( self, top_corner=None, L=60, row_height=5.0 ):
+        """
+        Draw stimulus locations
+
+        Args:
+            top_corner (list): Top corner of rectangle
+            L (int): Length of rectangle
+            row_height (float): Height of row
+
+        Returns:
+            None
+        """
         import matplotlib.pyplot as plt
         from matplotlib.patches import Rectangle
 
@@ -535,6 +617,12 @@ class HartleyDataset(SensoryBase):
         Calculates average firing probability across specified inds (or whole dataset)
         -- Note will respect datafilters
         -- will return precalc value to save time if already stored
+
+        Args:
+            inds (list): Indices to calculate average firing probability
+
+        Returns:
+            np.ndarray: Average firing probability
         """
         if inds is None:
             inds = range(self.NT)
@@ -557,8 +645,21 @@ class HartleyDataset(SensoryBase):
     def shift_stim(
         self, pos_shifts, metrics=None, metric_threshold=1, ts_thresh=8,
         shift_times=None, already_lagged=True ):
-        """Shift stimulus given standard shifting input (TBD)
-        use 'shift-times' if given shifts correspond to range of times"""
+        """
+        Shift stimulus given standard shifting input (TBD)
+        use 'shift-times' if given shifts correspond to range of times
+        
+        Args:
+            pos_shifts (np.ndarray): Position shifts
+            metrics (np.ndarray): Metrics for shifting
+            metric_threshold (int): Metric threshold
+            ts_thresh (int): Time shift threshold
+            shift_times (list): Shift times
+            already_lagged (bool): Already lagged
+
+        Returns:
+            np.ndarray: Shifted stimulus
+        """
         NX = self.stim_dims[1]
         nlags = self.stim_dims[3]
 
@@ -638,14 +739,36 @@ class HartleyDataset(SensoryBase):
 
     def shift_meta(self, pos_shifts, metrics=None, metric_threshold=1, ts_thresh=8,
         shift_times=None, already_lagged=True ):
-        """ Shift the relevant Hartley metadata. """
+        """
+        Shift the relevant Hartley metadata.
+        
+        Args:
+            pos_shifts (np.ndarray): Position shifts
+            metrics (np.ndarray): Metrics for shifting
+            metric_threshold (int): Metric threshold
+            ts_thresh (int): Time shift threshold
+            shift_times (list): Shift times
+            already_lagged (bool): Already lagged
+
+        Returns:
+            np.ndarray: Shifted metadata
+        """
         sp_meta = deepcopy(self.meta)
         return sp_meta
 
     def shift_stim_fixation( self, stim, shift):
-        """Simple shift by integer (rounded shift) and zero padded. Note that this is not in 
+        """
+        Simple shift by integer (rounded shift) and zero padded. Note that this is not in 
         is in units of number of bars, rather than -1 to +1. It assumes the stim
-        has a batch dimension (over a fixation), and shifts the whole stim by the same amount."""
+        has a batch dimension (over a fixation), and shifts the whole stim by the same amount.
+        
+        Args:
+            stim (np.ndarray): Stimulus
+            shift (int): Shift
+
+        Returns:
+            np.ndarray: Shifted stimulus
+        """
         print('Currently needs to be fixed to work with 2D')
         sh = round(shift)
         shstim = stim.new_zeros(*stim.shape)
@@ -662,7 +785,14 @@ class HartleyDataset(SensoryBase):
     def create_valid_indices(self, post_sacc_gap=None):
         """
         This creates self.valid_inds vector that is used for __get_item__ 
-        -- Will default to num_lags following each saccade beginning"""
+        -- Will default to num_lags following each saccade beginning
+        
+        Args:
+            post_sacc_gap (int): Post-saccade gap
+
+        Returns:
+            None
+        """
 
         if post_sacc_gap is None:
             post_sacc_gap = self.num_lags
@@ -757,7 +887,15 @@ class HartleyDataset(SensoryBase):
 
     @staticmethod
     def one_hot_encoder(arr):
+        """
+        One-hot encoder for array
 
+        Args:
+            arr (np.ndarray): Array to encode
+
+        Returns:
+            np.ndarray: One-hot encoded array
+        """
         arr = np.array(arr, dtype=np.float32).squeeze()
         categories = np.unique(arr)
         arr_dict = {}

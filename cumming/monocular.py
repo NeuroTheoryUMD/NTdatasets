@@ -37,6 +37,19 @@ class MultiDataset(SensoryBase):
         #time_embed=True,
         #includeMUs=False,
         **kwargs):
+        """
+        Initialize the MultiDataset class.
+
+        Args:
+            filenames: list of strings of the filenames (without extension) to load
+            datadir: directory where the data is stored
+            num_lags: how many lags back will the presumed model require (for establishing DFs too)
+            time_embed: whether to time-embed or not
+            trial_sample: whether dataset returns time-contiguous trials for each index or individual time points 
+            device: device to put the tensors on
+            preload: whether to load all data into memory at once
+            includeMUs: whether to include MUs in the dataset
+        """
 
         # call parent constructor
         super().__init__(
@@ -192,6 +205,15 @@ class MultiDataset(SensoryBase):
     # END MultiDataset.__init__
 
     def to_tensor(self, device=None):
+        """
+        Convert all data to tensors
+
+        Args:
+            device: device to put the tensors on
+
+        Returns:
+            None
+        """
         if device is None:
             if self.device is None:
                 device = torch.device("cpu")
@@ -212,8 +234,12 @@ class MultiDataset(SensoryBase):
     def __getitem__(self, index):
         """
         Called by the DataLoader to build the batch up one item at a time.
-        :param index: index to use for this batch
-        :return: dictionary of tensors for this batch
+        
+        Args:
+            index: index to use for this batch
+        
+        Returns:
+            dictionary of tensors for this batch
         """
         # Convert trials to indices if trial-sample
         if self.trial_sample:
@@ -293,6 +319,12 @@ class MultiDataset(SensoryBase):
         Calculates average firing probability across specified inds (or whole dataset)
         -- Note will respect datafilters
         -- will return precalc value to save time if already stored
+
+        Args:
+            inds: indices to calculate across
+
+        Returns:
+            avRs: average firing rates across the dataset
         """
         if inds is None:
             inds = range(self.NT)
@@ -319,6 +351,18 @@ class MultiDataset(SensoryBase):
     # END MultiDatasset.avrates()
 
     def subset( self, indxs=None, train=True, val=False, device=None ):
+        """
+        Subsets the dataset to only include the specified indices.
+
+        Args:
+            indxs: indices to subset the dataset to
+            train: whether to subset the training set
+            val: whether to subset the validation set
+            device: device to put the tensors on
+
+        Returns:
+            None
+        """
         assert self.preload, "Need preloaded data for this to work"
 
         self.fhandles = None
@@ -340,9 +384,18 @@ class MultiDataset(SensoryBase):
     # End Subset
 
     def shift_stim_fixation( self, stim, shift):
-        """Simple shift by integer (rounded shift) and zero padded. Note that this is not in 
+        """
+        Simple shift by integer (rounded shift) and zero padded. Note that this is not in 
         is in units of number of bars, rather than -1 to +1. It assumes the stim
-        has a batch dimension (over a fixation), and shifts the whole stim by the same amount."""
+        has a batch dimension (over a fixation), and shifts the whole stim by the same amount.
+        
+        Args:
+            stim: stimulus tensor to shift
+            shift: amount to shift the stimulus by
+
+        Returns:
+            shstim: shifted stimulus tensor
+        """
         sh = round(shift)
         shstim = stim.new_zeros(*stim.shape)
         if sh < 0:
@@ -356,14 +409,17 @@ class MultiDataset(SensoryBase):
     # END MultiDatasetFix.shift_stim_fixation
 
     def crossval_setup(self, folds=5, random_gen=False, test_set=False):
-        """This sets the cross-validation indices up We can add featuers here. Many ways to do this
+        """
+        This sets the cross-validation indices up We can add featuers here. Many ways to do this
         but will stick to some standard for now. It sets the internal indices, which can be read out
         directly or with helper functions. Perhaps helper_functions is the best way....
         
-        Inputs: 
+        Args:
+            folds: number of folds to use for cross-validation
             random_gen: whether to pick random fixations for validation or uniformly distributed
             test_set: whether to set aside first an n-fold test set, and then within the rest n-fold train/val sets
-        Outputs:
+        
+        Returns:
             None: sets internal variables test_inds, train_inds, val_inds
         """
 
@@ -409,7 +465,18 @@ class MultiDataset(SensoryBase):
     # END MultiDatasetFix.crossval_setup
 
     def fold_sample( self, num_items, folds, random_gen=False):
-        """This really should be a general method not associated with self"""
+        """
+        This really should be a general method not associated with self.
+        
+        Args:
+            num_items: number of items to fold
+            folds: number of folds to use
+            random_gen: whether to pick random fixations for validation or uniformly distributed
+
+        Returns:
+            val_items: indices for the validation set
+            rem_items: indices for the remaining set
+        """
         if random_gen:
             num_val = int(num_items/folds)
             tmp_seq = np.random.permutation(num_items)
@@ -442,7 +509,15 @@ class MultiDataset(SensoryBase):
 
 
 def get_stim_url(id):
-    
+    """
+    Get the stimulus URL for the specified experiment ID.
+
+    Args:
+        id: experiment ID
+
+    Returns:
+        URL for the specified experiment ID
+    """
     urlpath = {
             'expt01': 'https://www.dropbox.com/s/mn70kyohmp3kjnl/expt01.mat?dl=1',
             'expt02':'https://www.dropbox.com/s/pods4w89tbu2x57/expt02.mat?dl=1',
@@ -468,7 +543,16 @@ def get_stim_url(id):
     return urlpath[id]
 
 def download_set(sessname, fpath):
-    
+    """
+    Download the specified data set.
+
+    Args:
+        sessname: name of the session
+        fpath: path to save the data set
+
+    Returns:
+        None
+    """
     ensure_dir(fpath)
 
     # Download the data set
@@ -478,6 +562,15 @@ def download_set(sessname, fpath):
 
 # --- Define data-helpers
 def time_in_blocks(block_inds):
+    """
+    Calculate the total time in blocks.
+
+    Args:
+        block_inds: block indices
+
+    Returns:
+        total time in blocks
+    """
     num_blocks = block_inds.shape[0]
     #print( "%d number of blocks." %num_blocks)
     NT = 0
@@ -487,6 +580,17 @@ def time_in_blocks(block_inds):
 
 
 def make_block_inds( block_lims, gap=20, separate = False):
+    """
+    Make block indices from block limits.
+
+    Args:
+        block_lims: block limits
+        gap: gap between blocks
+        separate: whether to separate the blocks
+
+    Returns:
+        block indices
+    """
     block_inds = []
     for nn in range(block_lims.shape[0]):
         if separate:
@@ -498,7 +602,20 @@ def make_block_inds( block_lims, gap=20, separate = False):
 
 
 def monocular_data_import( datadir, exptn, num_lags=20 ):
+    """
+    Import monocular data.
 
+    Args:
+        datadir: directory where the data is stored
+        exptn: experiment name
+        num_lags: number of lags
+
+    Returns:
+        stim_all: stimulus
+        Robs_all: response
+        DFs_all: data filters
+        Eadd_info: additional information
+    """
     from copy import deepcopy
 
     time_shift = 1

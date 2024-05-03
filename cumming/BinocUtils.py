@@ -1,15 +1,25 @@
 import numpy as np
 import scipy.io as sio
 import NDNT.utils as utils
-import NDNT.NDNT as NDN
+import NDNT.NDN as NDN
 from time import time
 from copy import deepcopy
 import matplotlib.pyplot as plt
 
 
 def varDF( s, df=None, mean_adj=True ):
-    """Calculates variance over valid data. 
-    mean_adj means true variance, but take away and becomes average squared deviation"""
+    """
+    Calculates variance over valid data. 
+    mean_adj means true variance, but take away and becomes average squared deviation.
+    
+    Args:
+        s: signal to calculate variance over
+        df: data filter (if None, will use all data)
+        mean_adj: whether to subtract mean before squaring
+
+    Returns:
+        variance of signal
+    """
 
     s = s.squeeze()
     if df is None:
@@ -26,13 +36,18 @@ def varDF( s, df=None, mean_adj=True ):
      
 
 def explainable_variance( Edata, cell_n, fr1or3=None, inds=None, verbose=True ):
-    """Explainable variance calculation: binocular-specific because of the data structures
-    Inputs:
+    """
+    Explainable variance calculation: binocular-specific because of the data structures
+    
+    Args:
         Edata: binocular dataset (one experiment with a certain number of cells recorded)
         cell_n: cell number (in python numbering, i.e. starting with 0)
+        fr1or3: whether to use fr1==1, fr3==3, or both (leave as None) to calculate disparity. Should choose 1 or 3
         inds (def: None): indices to calculate variances over, if None will use all inds
             generally will pass in the fr3 indices, for example
-    Outputs:
+        verbose (def: True): self-explanatory
+    
+    Returns:
         totvar: literally the variance of the binned spike counts (resp) -- will be dom by spike stoch.
         explvar: explainable variance: repeatable variance (small fraction of totvar)
 
@@ -66,16 +81,21 @@ def explainable_variance( Edata, cell_n, fr1or3=None, inds=None, verbose=True ):
 
 
 def predictive_power( pred, Edata, cell_n, inds=None, verbose=True ):
-    """Predictive power calculation (R2 adjusted by dividing by explainable (rather than total) variance
+    """
+    Predictive power calculation (R2 adjusted by dividing by explainable (rather than total) variance
     (binocular-specific because of the data structures)
-    Inputs:
+    
+    Args:
         pred: model prediction: must have same size as robs (unindexed)
         Edata: binocular dataset (one experiment with a certain number of cells recorded)
         cell_n: cell number (in python numbering, i.e. starting with 0)
         inds (def: None): indices to calculate variances over, if None will use all inds
             BUT it should pass in XVinds generally, and for example could also focus on fr3
-        suppress_warnings (def False): self-explanatory
-    Outputs: predictive power of cell """
+        verbose (def: True): self-explanatory
+    
+    Returns: 
+        predictive power of cell
+    """
 
     assert cell_n < Edata.NC, "cell_n is too large for this experiment (num cells = %d)"%Edata.NC
     pred=pred.squeeze()
@@ -117,11 +137,19 @@ def predictive_power( pred, Edata, cell_n, inds=None, verbose=True ):
 
 
 def disparity_matrix( dispt, corrt=None ):
-    """Create one-hot representation of disparities: NT x 2*ND+2 (ND = num disparities)
+    """
+    Create one-hot representation of disparities: NT x 2*ND+2 (ND = num disparities)
     -- Columns (0,ND-1):  correlated
     -- Columns (ND, 2*ND-1): anticorrelated
     -- Column -2: uncorrelated
-    -- Column -1: blank 
+    -- Column -1: blank
+
+    Args:
+        dispt: disparity values
+        corrt: correlation values (if None, will not use)
+
+    Returns:
+        dmat: one-hot representation of disparities
     """
     dlist_raw = np.unique(dispt) 
     if np.max(abs(dlist_raw)) > 100:
@@ -153,8 +181,20 @@ def disparity_matrix( dispt, corrt=None ):
 
 
 def disparity_tuning( data, r, cell_n=None, num_dlags=8, fr1or3=3, to_plot=False ):
-    """Compute disparity tuning (disparity vs time) -- returned in dictionary object
+    """
+    Compute disparity tuning (disparity vs time) -- returned in dictionary object
     -> include cell_n to use data_filters from the actual cell
+
+    Args:
+        data: binocular dataset (NTdatasets.binocular.single)
+        r: response of the cell (or model) to use
+        cell_n: cell number (in python numbering, i.e. starting with 0)
+        num_dlags: number of lags to use in the time embedding
+        fr1or3: whether to use fr1==1, fr3==3, or both (leave as None) to calculate disparity. Should choose 1 or 3
+        to_plot: whether to plot the tuning curve
+
+    Returns:
+        Dinfo: dictionary with all the information about the disparity tuning curve
     """
     import torch
 
@@ -222,19 +262,22 @@ def disparity_predictions(
     data, resp=None, cell_n=None, 
     fr1or3=None, indxs=None, 
     num_dlags=8,  spiking=True, rectified=True ):
-    """Calculates a prediction of the disparity (and timing) signals that can be inferred from the response
+    """
+    Calculates a prediction of the disparity (and timing) signals that can be inferred from the response
     by the disparity input alone. This puts a lower bound on how much disparity is driving the response, although
     practically speaking it generates the same disparity tuning curves for neurons.
     
-    Inputs:
+    Args:
         data: dataset (NTdatasets.binocular.single)
         resp: either Robs or predicted response across whole dataset -- leave blank if want neurons Robs
+        cell_n: cell number (in python numbering, i.e. starting with 0)
+        fr1or3: whether to use fr1==1, fr3==3, or both (leave as None) to calculate disparity. Should choose 1 or 3
         indxs: subset of data -- probably will not use given dfs and fr1or3
         num_dlags: how many lags to compute disparity/timing predictions using (default 8 is sufficient)
-        fr1or3: whether to use fr1==1, fr3==3, or both (leave as None) to calculate disparity. Should choose 1 or 3
         spiking: whether to use Poisson loss function (spiking data) or Gaussian (continuous prediction): default True
         rectified: whether to rectify the predictions using softplus (since predicting spikes, generally)
-    Outputs: 
+    
+    Returns: 
         Dpred: full disparity+timing prediction
         Tpred: prediction using just frame refresh and blanks
         Note that both will predict over the whole dataset, even if only used 1 part to fit
@@ -322,10 +365,22 @@ def disparity_predictions(
 
 
 def binocular_model_performance( data=None, cell_n=None, Rpred=None, valset=None, verbose=True ):
-    """Current best-practices for generating prediction quality of neuron and binocular tuning. Currently we
+    """
+    Current best-practices for generating prediction quality of neuron and binocular tuning. Currently we
     are not worried about using cross-validation indices only (as they are based on much less data and tend to
     otherwise be in agreement with full measures, but this option could be added in later versions.
-    valset can be None (use all val_inds, 'a' or 'b': use subset)"""
+    valset can be None (use all val_inds, 'a' or 'b': use subset)
+    
+    Args:
+        data: binocular dataset (NTdatasets.binocular.single)
+        cell_n: cell number (in python numbering, i.e. starting with 0)
+        Rpred: predicted response of the model
+        valset: which validation set to use (None, 'a', 'b')
+        verbose: whether to print out results
+
+    Returns:
+        BMP: dictionary with all the information about the binocular model performance
+    """
 
     assert data is not None, 'Need to include dataset'
     assert cell_n is not None, 'Must specify cell to check'
@@ -466,7 +521,19 @@ def binocular_model_performance( data=None, cell_n=None, Rpred=None, valset=None
 
 ## Binocular model utilities
 def compute_Mfilters( tkerns=None, filts=None, mod=None, to_plot=True, to_output=False):
-    """Compute a spatiotemporal filter from temporal kernels convolved with second-layer filter"""
+    """
+    Compute a spatiotemporal filter from temporal kernels convolved with second-layer filter
+    
+    Args:
+        tkerns: temporal kernels (NT x num_kernels)
+        filts: second-layer filters (num_kernels x num_space x num_filters)
+        mod: model to extract weights from
+        to_plot: whether to plot the filter
+        to_output: whether to return the filter
+
+    Returns:
+        Mfilts: spatiotemporal filter
+    """
     if mod is not None:
         tkerns = mod.get_weights(layer_target=0)
         filts = mod.get_weights(layer_target=1)
@@ -493,8 +560,22 @@ def compute_Mfilters( tkerns=None, filts=None, mod=None, to_plot=True, to_output
 
 def compute_binocular_filters(binoc_mod, to_plot=True, cmap=None, time_reverse=True,
                               num_space=None, ffnet_n=None, mfilters=None ):
-    """using standard binocular model, compute filters. defaults to first ffnet and
-    num_space = 36. Set num_space=None to go to minimum given convolutional constraints"""
+    """
+    Using standard binocular model, compute filters. defaults to first ffnet and
+    num_space = 36. Set num_space=None to go to minimum given convolutional constraints
+    
+    Args:
+        binoc_mod: binocular model
+        to_plot: whether to plot the filters
+        cmap: colormap to use
+        time_reverse: whether to reverse the time axis
+        num_space: number of spatial dimensions to use
+        ffnet_n: which feed-forward network to use
+        mfilters: monocular filters to use (if None, will use first layer of model)
+
+    Returns:
+        bifilts: binocular filters
+    """
 
     # Find binocular layer within desired (or whole) model
     from NDNT.modules.layers import BiConvLayer1D, BiSTconv1D #, ChannelConvLayer
@@ -571,6 +652,15 @@ def compute_binocular_filters(binoc_mod, to_plot=True, cmap=None, time_reverse=T
 
 
 def plot_sico_readout( sico ):
+    """
+    Plot the readout weights of the SICO model
+
+    Args:
+        sico: SICO model
+
+    Returns:
+        None
+    """
     from NDNT.utils import imagesc
     w = sico.networks[0].layers[-1].get_weights().squeeze().T
     NF = w.shape[1]
