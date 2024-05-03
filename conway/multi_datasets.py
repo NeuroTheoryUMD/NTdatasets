@@ -41,6 +41,7 @@ class MultiClouds(SensoryBase):
         drift_interval=None,
         trial_sample=True,
         luminance_only=True,
+        LMS=False,
         binocular=False, # whether to include separate filters for each eye
         eye_config=3,  # 0 = all, 1, 2, and 3 are options (3 = binocular)
         eye_contiguous=True, # whether to only use eye_config data that is contiguous 
@@ -91,7 +92,7 @@ class MultiClouds(SensoryBase):
         self.output_separate_eye_stim = False
         self.expt_stims = [None]*self.Nexpts
         self.L = None
-        self.LMS = False
+        self.LMS = LMS
         
         self.start_t = 0
         self.drift_interval = drift_interval
