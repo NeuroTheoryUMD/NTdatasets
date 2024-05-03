@@ -707,14 +707,19 @@ class MultiClouds(SensoryBase):
                         stimET[Leye, 0:3, ...] = np.array(fhandle['stimET'], dtype=np.float32)[Leye, ...]
                         stimET[Reye, 3:6, ...] = np.array(fhandle['stimET'], dtype=np.float32)[Reye, ...]
             else:
-                #stimET=stimET_base
+                stimET=stimET_base
                 stimLP=stimLP_base
+                if self.luminance_only:
+                    num_clr = 1
+                    stimLP = stimLP[:, 0, ...][:, None, ...]
+                else:
+                    num_clr = 3
                 if stimET_base is not None:
-                    stimET=stimET_base
+                    # stimET=stimET_base
                     if self.luminance_only:
                         if stimET_base is not None: 
                             stimET = stimET[:, 0, ...][:, None, ...]  # maintain 2nd dim (length 1)
-                        stimLP = stimLP[:, 0, ...][:, None, ...]
+         
             NT = self.fileNT[expt_n]
             newstim = np.zeros( [NT, num_clr, L, L], dtype=np.int8 )
             for ii in range(locsLP.shape[1]):
