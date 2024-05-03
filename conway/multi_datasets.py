@@ -688,7 +688,6 @@ class MultiClouds(SensoryBase):
                 self.binocular_gain[LRpresent == 1, 0] = 1.0
                 self.binocular_gain[LRpresent == 2, 1] = 1.0
                 if self.luminance_only: 
-                    #num_clr = 2
                     #empty_stimET=np.zeros((np.shape(stimET)[0], 2, np.shape(stimET)[2], np.shape(stimET)[3]))
                     stimLP=np.zeros((np.shape(stimLP_base)[0], 2, np.shape(stimLP_base)[2], np.shape(stimLP_base)[3]))
                     stimLP[Leye, 0, ...] = np.array(fhandle['stim'], dtype=np.float32)[Leye, 0, ...]
@@ -698,7 +697,6 @@ class MultiClouds(SensoryBase):
                         stimET[Leye, 0, ...] = np.array(fhandle['stimET'], dtype=np.float32)[Leye, 0, ...]
                         stimET[Reye, 1, ...] = np.array(fhandle['stimET'], dtype=np.float32)[Reye, 0, ...]
                 else:
-                    #num_clr = 6
                     stimLP = np.zeros((np.shape(stimLP_base)[0], 6, np.shape(stimLP_base)[2], np.shape(stimLP_base)[3]))
                     stimLP[Leye, 0:3, ...] = np.array(fhandle['stim'], dtype=np.float32)[Leye, ...]
                     stimLP[Reye, 3:6, ...] = np.array(fhandle['stim'], dtype=np.float32)[Reye, ...]
@@ -710,10 +708,7 @@ class MultiClouds(SensoryBase):
                 stimET=stimET_base
                 stimLP=stimLP_base
                 if self.luminance_only:
-                    num_clr = 1
                     stimLP = stimLP[:, 0, ...][:, None, ...]
-                else:
-                    num_clr = 3
                 if stimET_base is not None:
                     # stimET=stimET_base
                     if self.luminance_only:
