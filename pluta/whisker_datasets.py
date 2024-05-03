@@ -85,40 +85,6 @@ class WhiskerData(SensoryBase):
         #    multitouches[:,1+2*ipsi] = self.touchfull[:, 1] * self.touchfull[:, 2+ipsi]
         # New multi-touches based on scotts advice
         #self.multitouches = np.zeros([NT, 8])
-        self.multitouches = np.zeros([NT, 16])
-        self.shadow_touches = np.zeros([NT, 4])
-
-        coin_win = 10
-        #self.touches[-coin_win:, :] = 0  # just so no crashing
-        self.touches[:coin_win, :] = 0  # just so no crashing -- retro
-        self.touches[(-coin_win):, :] = 0  # just so no crashing -- post
-        for hem in range(2):
-            oppo_ws = (1-hem)*2 + np.arange(2)
-            for pw in range(2):
-                ww = 2*hem+pw
-                pwtouches = np.where(self.touches[:, ww] > 0)[0]
-                for tt in pwtouches:
-                    uni_touch=True
-                    ipsi_touch_count = np.sum(self.touches[range(tt-coin_win+1, tt+1), :][:,oppo_ws], axis=0)
-                    # IPSI FIRST
-                    if ipsi_touch_count[0] > 0:
-                        self.multitouches[tt, 4*ww] = 1.0
-                    elif ipsi_touch_count[1] > 0:
-                        self.multitouches[tt, 4*ww+1] = 1.0
-                    if np.sum(ipsi_touch_count) > 0:
-                        uni_touch=False
-                    # IPSI SECOND
-                    ipsi_touch_count = np.sum(self.touches[range(tt, tt+coin_win), :][:,oppo_ws], axis=0)
-                    if ipsi_touch_count[0] > 0:
-                        self.multitouches[tt, 4*ww+2] = 1.0
-                    elif ipsi_touch_count[1] > 0:
-                        self.multitouches[tt, 4*ww+3] = 1.0
-                    if np.sum(ipsi_touch_count) > 0:
-                        uni_touch=False
-                    
-                    if uni_touch:
-                        self.shadow_touches[tt, ww] = 1.0
-
         # Extract onset for both single and multitouches
         #self.multitouches = np.zeros([NT, 4])
         #for ww in range(4):
@@ -145,11 +111,55 @@ class WhiskerData(SensoryBase):
         #self.prepare_stim()
     # END WhiskerData.__init__()
 
-    def prepare_stim( self, stim_config=0, num_lags=None, temporal_basis=None, include_multitouches=False ):
+    def prepare_stim(self, stim_config=0, num_lags=None, temporal_basis=None, 
+                     include_multitouches=False, pre_window=10, post_window=0, pre_post_window=2 ):
 
         self.include_multitouches = include_multitouches
+
+        nvar_per_whisker = 0
+        if post_window > 0:
+            nvar_per_whisker += 2
+        if pre_window > 0:
+            nvar_per_whisker += 2
+        self.multitouches = np.zeros([self.NT, nvar_per_whisker*4])
+        print(self.multitouches.shape)
         if include_multitouches:
-            self.touches = deepcopy(self.shadow_touches)  # makes only single-whisker
+            self.touches[:pre_window, :] = 0  # just so no crashing -- retro
+            self.touches[-np.maximum(pre_post_window, post_window):, :] = 0  # just so no crashing -- post
+            
+            for hem in range(2):
+                oppo_ws = (1-hem)*2 + np.arange(2)
+                for pw in range(2):
+                    ww = 2*hem+pw
+                    pwtouches = np.where(self.touches[:, ww] > 0)[0]
+                    for tt in pwtouches:
+                        uni_touch=True
+                        # IPSI FIRST
+                        if pre_window > 0:
+                            ipsi_touch_count = np.sum(self.touches[range(tt-pre_window+1, tt+pre_post_window+1), :][:, oppo_ws], axis=0)
+                            if ipsi_touch_count[0] > 0:
+                                self.multitouches[tt, nvar_per_whisker*ww] = 1.0
+                            elif ipsi_touch_count[1] > 0:
+                                self.multitouches[tt, nvar_per_whisker*ww+1] = 1.0
+                            if np.sum(ipsi_touch_count) > 0:
+                                uni_touch=False
+                        # IPSI SECOND
+                        if post_window > 0:
+                            if pre_window > 0:
+                                # then zero-point is already included in pre
+                                ipsi_touch_count = np.sum(self.touches[range(tt+1, tt+post_window), :][:,oppo_ws], axis=0)
+                            else:
+                                ipsi_touch_count = np.sum(self.touches[range(tt, tt+post_window), :][:,oppo_ws], axis=0)
+
+                            if ipsi_touch_count[0] > 0:
+                                self.multitouches[tt, nvar_per_whisker*ww+2] = 1.0
+                            elif ipsi_touch_count[1] > 0:
+                                self.multitouches[tt, nvar_per_whisker*ww+3] = 1.0
+                            if np.sum(ipsi_touch_count) > 0:
+                                uni_touch=False
+                        
+                        if not uni_touch:
+                            self.touches[tt, ww] = 0.0
 
         #self.stim = torch.tensor( self.touches, dtype=torch.float32, device=device )
         if num_lags is None:
