@@ -122,7 +122,17 @@ class WhiskerData(SensoryBase):
 
     def prepare_stim(self, stim_config=0, num_lags=None, temporal_basis=None, 
                      include_multitouches=False, pre_window=10, post_window=0, pre_post_window=2 ):
+        """
+        Prepare stimulus for model fitting
 
+        Args:
+            stim_config: 0=AB, 1=BA, 2=ABCD
+            num_lags: number of lags to include in the design matrix
+            temporal_basis: doubling time for temporal basis
+
+        Returns:
+            None
+        """
         self.include_multitouches = include_multitouches
 
         nvar_per_whisker = 0
