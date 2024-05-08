@@ -181,7 +181,8 @@ class SensoryBase(Dataset):
             self.dfs_out = None
             self.Mtrn_out = None
             self.Mval_out = None
-            print("  Reset cells_out to full dataset (%d cells)."%self.NC )
+            if verbose:
+                print("  Reset cells_out to full dataset (%d cells)."%self.NC )
         else:
             if not isinstance(cell_list, list):
                 if utils.is_int(cell_list):
