@@ -301,7 +301,7 @@ class MultiClouds(SensoryBase):
                     print("  Disjoint data exists with this eye_config -- trunctating to first section.")
                     tmap = tmap[range(tbreaks[0]+1)]
 
-            # Remap valid_inds to smaller trage
+            # Remap valid_inds to smaller trange -- does not use val_track: just temp variable
             val_track = np.zeros(NT, dtype=np.int64)
             val_track[valid_inds] = 1
             valid_inds = np.where(val_track[tmap] == 1)[0]
@@ -424,7 +424,11 @@ class MultiClouds(SensoryBase):
         tcount, ccount = 0, 0
         for ff in range(self.Nexpts):
             NTexpt = self.file_info[ff]['NT']
-            NSUs= self.file_info[ff]['NSUs']
+            NSUs = self.file_info[ff]['NSUs']
+
+            valid_data = np.zeros(NTexpt, dtype=np.uint8)
+            valid_data[self.file_info[ff]['valid_inds']] = 1
+
             # Classify cell-lists in terms of SUs and MUc
             su_list = self.cranges[ff][self.cranges[ff] < NSUs]
             R_tslice = np.zeros( [NTexpt, self.NC], dtype=np.int64 )
@@ -432,8 +436,9 @@ class MultiClouds(SensoryBase):
 
             tslice = np.array(self.fhandles[ff]['Robs'], dtype=np.int64)[self.tranges[ff], :]
             R_tslice[:, ccount+np.arange(len(su_list))] = deepcopy(tslice[:, su_list])
-            tslice = np.array(self.fhandles[ff]['datafilts'], dtype=np.uint8)[self.tranges[ff], :] 
-            df_tslice[:, ccount+np.arange(len(su_list))] = deepcopy(tslice[:, su_list])
+            tslice = np.array(self.fhandles[ff]['datafilts'], dtype=np.uint8)[self.tranges[ff], :]
+            # Also take valid_data into account
+            df_tslice[:, ccount+np.arange(len(su_list))] = deepcopy(tslice[:, su_list]) * valid_data[:, None]
             ccount += len(su_list)
 
             if self.include_MUs:
@@ -442,7 +447,7 @@ class MultiClouds(SensoryBase):
                 tslice = np.array(self.fhandles[ff]['RobsMU'], dtype=np.int64)[self.tranges[ff], :]
                 R_tslice[:, ccount+np.arange(len(mu_list))] = deepcopy(tslice[:, mu_list])
                 tslice = np.array(self.fhandles[ff]['datafiltsMU'], dtype=np.int64)[self.tranges[ff], :]
-                df_tslice[:, ccount+np.arange(len(mu_list))] = deepcopy(tslice[:, mu_list])
+                df_tslice[:, ccount+np.arange(len(mu_list))] = deepcopy(tslice[:, mu_list]) * valid_data[:, None]
                 ccount += len(mu_list)
 
             # Check that clipping to uint8 wont screw up any robs
