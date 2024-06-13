@@ -347,8 +347,8 @@ def disparity_predictions(
     tpred_layer = NDNLayer.layer_dict(
         input_dims=[2,1,1,num_dlags], num_filters=1, bias=True, NLtype=nltype)
 
-    dpredmod = NDN.NDN( layer_list=[dpred_layer], loss_type=losstype )
-    tpredmod = NDN.NDN( layer_list=[tpred_layer], loss_type=losstype )
+    dpredmod = NDN( layer_list=[dpred_layer], loss_type=losstype )
+    tpredmod = NDN( layer_list=[tpred_layer], loss_type=losstype )
     tpredmod.networks[0].xstim_n = 'timing'
 
     #dpredmod.fit( Ddata, force_dict_training=True, train_inds=mod_indxs, val_inds=mod_indxs, 
