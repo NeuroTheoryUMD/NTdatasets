@@ -651,7 +651,7 @@ def compute_binocular_filters(binoc_mod, to_plot=True, cmap=None, time_reverse=T
         return bifilts
 
 
-def plot_sico_readout( sico ):
+def plot_sico_readout( sico, cell_n=None ):
     """
     Plot the readout weights of the SICO model
 
@@ -662,13 +662,18 @@ def plot_sico_readout( sico ):
         None
     """
     from NDNT.utils import imagesc
-    w = sico.networks[0].layers[-1].get_weights().squeeze().T
+    if cell_n is None:
+        w = sico.networks[0].layers[-1].get_weights().squeeze().T
+    else:
+        w = sico.networks[0].layers[-1].get_weights()[..., cell_n].T
     NF = w.shape[1]
     NI = sico.networks[0].layers[-2].num_inh
     NE = NF-NI
     w[:, NE:] *= -1
 
-    utils.subplot_setup(1,1,fig_width=6, row_height=0.15*NF)
+    if cell_n is None:
+        utils.subplot_setup(1,1,fig_width=6, row_height=0.25*NF)
     imagesc(w, cmap='bwr')
-    plt.show()
+    if cell_n is None:
+        plt.show()
 
