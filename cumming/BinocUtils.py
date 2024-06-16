@@ -558,11 +558,12 @@ def compute_Mfilters( tkerns=None, filts=None, mod=None, to_plot=True, to_output
         return Mfilts
 
 
-def compute_binocular_filters(binoc_mod, to_plot=True, cmap=None, time_reverse=True,
+def compute_binocular_filters_old(binoc_mod, to_plot=True, cmap=None, time_reverse=True,
                               num_space=None, ffnet_n=None, mfilters=None ):
     """
     Using standard binocular model, compute filters. defaults to first ffnet and
     num_space = 36. Set num_space=None to go to minimum given convolutional constraints
+    -> this is older function that might be outdated (see new function below)
     
     Args:
         binoc_mod: binocular model
@@ -677,3 +678,129 @@ def plot_sico_readout( sico, cell_n=None ):
     if cell_n is None:
         plt.show()
 
+### NEW FUNCTIONS ADDED 2024 ###
+def compute_mfilters( mod, tkerns=None):
+    """
+    Calculates the filters of the first (monocular) stage of model given tkerns
+
+    Args: 
+        mod: binocular model with monocular subspace and implicit temporal basis embedded in stim
+        tkerns: temporal kernels, if none (default) than just returns first layer (but shouldn't)
+
+    Returns:
+        mfilts
+    """
+    assert tkerns is not None, "No temporal basis specified."
+    k = mod.get_weights()
+    if tkerns is not None:
+        mfilts = np.einsum('tc,xcf->xtf', tkerns, k)
+    else:
+        print(  "Warning: no temporal kernels specified, just using get_weights()" )
+        mfilts = k    
+    return mfilts
+
+
+def dist_mean( p ):
+    xs = np.arange(len(p))
+    return np.sum(xs*p)/np.sum(p)
+
+
+def compute_binoc_filters( binoc_mod, tkerns=None, width=None, newlags=None, skip_lags=0, center=True ):
+    """
+    Calculates binocular filter array for monocular-subspace model, including accounting for temporal kernels
+    used to preprocess the input.
+    Adjusts for skip_lags, although must enter by hand (default=0)
+    
+    Args:
+        binoc_mod: assumes temporal kernels processing input, and monocular subspace before binocular filters
+        tkerns: temporal kernels that pre-processed stimulus
+        width: how wide each monocular filter should be displayed: its convolutional so not set. Default
+               is based on model itself: monocular filter with plus what binocular convolutions brings
+        newlags: lags past what is given by filter (default none)
+        center: centers each binocular filter based on mean temporal power (since it will be convolved too)
+    
+    Returns:
+        eye_filts: binocular filters by eye with dims [2, width, lags, num_filters]        
+    """
+
+    if tkerns is None:
+        mfilters = binoc_mod.get_weights(layer_target=0)
+        if skip_lags != 0:
+            mfilters = np.roll(mfilters, skip_lags, axis=0)
+    else:
+        # shift 
+        if skip_lags != 0:
+            tks = np.roll(tkerns, skip_lags, axis=0)
+        else:
+            tks = tkerns
+        mfilters = compute_mfilters(binoc_mod, tkerns=tks)
+    
+    NXM, num_lags, NF = mfilters.shape
+    if newlags is None:
+        newlags = num_lags
+
+    ws = binoc_mod.get_weights(ffnet_target=0, layer_target=1)
+    NF2, NXC, NBF = ws.shape 
+    num_cspace = NXM+NXC-1
+    NF2, NXC, NBF, num_cspace
+    eye_filts = np.zeros([num_cspace, newlags, 2, NBF])
+    assert NF2 == 2*NF, "Monocular filter number mismatch"
+    for xx in range(NXC):
+        for eye in range(2):
+            eye_filts[np.arange(NXM)+xx, :, eye, :] += np.einsum(
+                'xtm,mf->xtf', mfilters[:,:newlags,:], ws[np.arange(eye,NF2,2), xx, :][:, :newlags] )
+
+    if center:
+        sp_maps = np.sum(np.std(eye_filts,axis=1),axis=1)
+        for ii in range(NBF):
+            sh = int(np.round(num_cspace/2-dist_mean(sp_maps[:,ii])))                
+            eye_filts[..., ii] = np.roll(eye_filts[..., ii], sh, axis=0)
+
+    if width is None:
+        width = num_cspace
+    if width < num_cspace:
+        shrinky = (num_cspace-width)//2
+        print('  shrinking width', num_cspace,'->', width)
+        eye_filts = eye_filts[np.arange(width)+shrinky, ...]
+    else:
+        if width > num_cspace:
+            print('width too large -- havent set up yet')
+    
+    return eye_filts.transpose([2,0,1,3])
+
+
+def plot_mfilters( model, tkerns=None, flip=True, axis_labels=False, max_lags=12, rh=2 ):
+        mfilts = compute_mfilters( model, tkerns=tkerns)
+        NF = mfilts.shape[-1]
+
+        nrows = int(np.ceil(NF/6))
+        utils.ss(nrows,6, rh=rh)
+        for ii in range(NF):
+            plt.subplot(nrows,6,ii+1)
+            if flip:
+                utils.imagesc(np.flip(mfilts[:, :max_lags, ii],axis=1), axis_labels=axis_labels)
+            else:
+                utils.imagesc(mfilts[:, :max_lags, ii], axis_labels=axis_labels)
+        plt.show()
+
+
+def plot_bfilters( model, TB=None, max_lags=12, rh=2, flip=True, axis_labels=False ):
+    kb = compute_binoc_filters( model, TB )
+    _, fw, nlags, NF = kb.shape
+    nexc = NF-model.networks[0].layers[1].num_inh
+
+    nrows = int(np.ceil(NF/4))
+    utils.ss(nrows,4, rh=rh)
+    #m = np.max(abs(kb))
+    for ii in range(NF):
+        plt.subplot(nrows,4,ii+1)
+        if flip:
+            utils.imagesc( np.fliplr(kb[:,:,:max_lags,ii].reshape([-1,max_lags])), axis_labels=axis_labels )
+        else:
+            utils.imagesc( kb[:,:,:max_lags,ii].reshape([-1,max_lags]) )
+        plt.plot(np.ones(2)*(fw-0.5),[-0.5,max_lags-0.5],'k')
+        if ii < nexc:
+            plt.title("EXC %d"%ii)
+        else:
+            plt.title("INH %d (%d)"%(ii-nexc, ii))
+    plt.show()
