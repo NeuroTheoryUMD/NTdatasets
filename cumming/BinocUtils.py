@@ -652,7 +652,7 @@ def compute_binocular_filters_old(binoc_mod, to_plot=True, cmap=None, time_rever
         return bifilts
 
 
-def plot_sico_readout( sico, cell_n=None ):
+def plot_sico_readout( sico, cell_n=None, rh=None ):
     """
     Plot the readout weights of the SICO model
 
@@ -665,6 +665,8 @@ def plot_sico_readout( sico, cell_n=None ):
     from NDNT.utils import imagesc
     if cell_n is None:
         w = sico.networks[0].layers[-1].get_weights().squeeze().T
+        if sico.networks[0].layers[-1].input_dims[0] == 1:
+            w = w[None,:].T
     else:
         w = sico.networks[0].layers[-1].get_weights()[..., cell_n].T
     NF = w.shape[1]
@@ -673,8 +675,11 @@ def plot_sico_readout( sico, cell_n=None ):
     w[:, NE:] *= -1
 
     if cell_n is None:
-        utils.subplot_setup(1,1,fig_width=6, row_height=0.25*NF)
-    imagesc(w, cmap='bwr')
+        if rh is None:
+            rh = 0.25*NF
+        utils.subplot_setup(1,1,fig_width=6, row_height=rh)
+
+    imagesc(w, cmap='bwr', balanced=True)
     if cell_n is None:
         plt.show()
 
@@ -705,7 +710,7 @@ def dist_mean( p ):
     return np.sum(xs*p)/np.sum(p)
 
 
-def compute_binoc_filters( binoc_mod, tkerns=None, width=None, newlags=None, skip_lags=0, center=True ):
+def compute_bfilters( binoc_mod, tkerns=None, width=None, newlags=None, skip_lags=0, center=True ):
     """
     Calculates binocular filter array for monocular-subspace model, including accounting for temporal kernels
     used to preprocess the input.
@@ -742,13 +747,16 @@ def compute_binoc_filters( binoc_mod, tkerns=None, width=None, newlags=None, ski
     ws = binoc_mod.get_weights(ffnet_target=0, layer_target=1)
     NF2, NXC, NBF = ws.shape 
     num_cspace = NXM+NXC-1
-    NF2, NXC, NBF, num_cspace
+    #print('top', NF2, NXC, NBF, num_cspace)
+    #print(mfilters.shape, tkerns.shape, NXM)
     eye_filts = np.zeros([num_cspace, newlags, 2, NBF])
     assert NF2 == 2*NF, "Monocular filter number mismatch"
     for xx in range(NXC):
         for eye in range(2):
+            print(eye_filts[np.arange(NXM)+xx, :, eye, :].shape)
+            print(mfilters[:,:newlags,:].shape, ws[np.arange(eye,NF2,2), xx, :].shape)
             eye_filts[np.arange(NXM)+xx, :, eye, :] += np.einsum(
-                'xtm,mf->xtf', mfilters[:,:newlags,:], ws[np.arange(eye,NF2,2), xx, :][:, :newlags] )
+                'xtm,mf->xtf', mfilters[:,:newlags,:], ws[np.arange(eye,NF2,2), xx, :] )#[:, :newlags]
 
     if center:
         sp_maps = np.sum(np.std(eye_filts,axis=1),axis=1)
@@ -785,7 +793,7 @@ def plot_mfilters( model, tkerns=None, flip=True, axis_labels=False, max_lags=12
 
 
 def plot_bfilters( model, TB=None, max_lags=12, rh=2, flip=True, axis_labels=False ):
-    kb = compute_binoc_filters( model, TB )
+    kb = compute_bfilters( model, TB )
     _, fw, nlags, NF = kb.shape
     nexc = NF-model.networks[0].layers[1].num_inh
 
