@@ -364,7 +364,7 @@ def disparity_predictions(
     return dpred, tpred
 
 
-def binocular_model_performance( data=None, cell_n=None, Rpred=None, valset=None, verbose=True ):
+def binocular_model_performance( data=None, cell_n=0, Rpred=None, valset=None, verbose=True ):
     """
     Current best-practices for generating prediction quality of neuron and binocular tuning. Currently we
     are not worried about using cross-validation indices only (as they are based on much less data and tend to
@@ -383,7 +383,7 @@ def binocular_model_performance( data=None, cell_n=None, Rpred=None, valset=None
     """
 
     assert data is not None, 'Need to include dataset'
-    assert cell_n is not None, 'Must specify cell to check'
+    #assert cell_n is not None, 'Must specify cell to check'
 
     #import torch
     #if not isinstance( Rpred, torch.Tensor):
@@ -753,8 +753,6 @@ def compute_bfilters( binoc_mod, tkerns=None, width=None, newlags=None, skip_lag
     assert NF2 == 2*NF, "Monocular filter number mismatch"
     for xx in range(NXC):
         for eye in range(2):
-            print(eye_filts[np.arange(NXM)+xx, :, eye, :].shape)
-            print(mfilters[:,:newlags,:].shape, ws[np.arange(eye,NF2,2), xx, :].shape)
             eye_filts[np.arange(NXM)+xx, :, eye, :] += np.einsum(
                 'xtm,mf->xtf', mfilters[:,:newlags,:], ws[np.arange(eye,NF2,2), xx, :] )#[:, :newlags]
 
