@@ -676,7 +676,7 @@ def plot_sico_readout( sico, cell_n=None, rh=None ):
 
     if cell_n is None:
         if rh is None:
-            rh = 0.25*NF
+            rh = 0.4*NF #np.minimum(0.4*NF,2)
         utils.subplot_setup(1,1,fig_width=6, row_height=rh)
 
     imagesc(w, cmap='bwr', balanced=True)
@@ -808,5 +808,424 @@ def plot_bfilters( model, TB=None, max_lags=12, rh=2, flip=True, axis_labels=Fal
         if ii < nexc:
             plt.title("EXC %d"%ii)
         else:
-            plt.title("INH %d (%d)"%(ii-nexc, ii))
+            plt.title("%d: INH %d "%(ii, ii-nexc))
     plt.show()
+
+
+#### NEW CLONE UTILS ####
+def model_selection( LLs, thresh=0.99, verbose=False, LLthresh=None ):
+    # Model selection from regularization -- find smallest regularization value within thresh of max
+    if LLthresh is None:
+        LLthresh = thresh*max(LLs)
+    a = np.where(LLs >= LLthresh)[0]
+    selection = min(a)
+    if verbose:
+        print("  %d LLs meet criteria (%0.5f out of %0.5f)"%(len(a), LLthresh, max(LLs)))
+        print("  Using %d: (max at %d out of %d)"%(selection, np.argmax(LLs), len(LLs)))
+    return selection
+
+
+def reconstitute_bmodel( clone_mod, cc ):
+    ### start with exact copy 
+    import torch
+    clone_mod = clone_mod.to(torch.device('cpu'))
+    num_networks = len(clone_mod.ffnet_list)
+    stim_net = deepcopy(clone_mod.ffnet_list[0])
+    
+    # Reconstitute mask
+    NF = clone_mod.networks[0].layers[-1].input_dims[0]
+    NX = clone_mod.networks[0].layers[0].input_dims[1]
+    NXmod = clone_mod.networks[0].layers[-1].input_dims[1]
+    NC = clone_mod.networks[-1].layers[0].output_dims[0]
+    numE = NF - clone_mod.networks[0].layers[-2].num_inh
+    mask = deepcopy(clone_mod.networks[0].layers[-1].mask.detach().numpy()).reshape([NF, NXmod, NC])
+    
+    # Extract how many filters getting pulled
+    ne =  int(np.sum(mask[:numE,0,cc]))
+    ni =  int(np.sum(mask[numE:,0,cc]))
+    print( "Model extraction: %d exc, %d inh filters"%(ne, ni))
+
+    # modification of binocular layer
+    stim_net['layer_list'][1]['num_filters'] = ne+ni
+    stim_net['layer_list'][1]['num_inh'] = ni
+
+    # modification of readout layer
+    stim_net['layer_list'][2]['layer_type'] = 'normal'
+    stim_net['layer_list'][2]['num_filters'] = 1
+    #del stim_net['layer_list'][2]['mask']
+    if num_networks == 1:
+        
+        single_mod = NDN( ffnet_list=[stim_net] )
+    else:
+        
+        drift_net = deepcopy(clone_mod.ffnet_list[1])
+        drift_net['layer_list'][0]['num_filters'] = 1
+        
+        comb_net = deepcopy(clone_mod.ffnet_list[2])
+        comb_net['layer_list'][0]['layer_type'] = 'normal'
+        comb_net['layer_list'][0]['num_filters'] = 1
+    
+        single_mod = NDN( ffnet_list=[stim_net, drift_net, comb_net] )
+        single_mod.networks[1].layers[0].weight.data[:,0] = \
+            clone_mod.networks[1].layers[0].weight.data[:,cc].clone()
+
+    # Copy stim-processing in layer-0
+    single_mod.networks[0].layers[0] = deepcopy(clone_mod.networks[0].layers[0])
+    # Get relevant filters in layer-1
+    non_zeroBs = np.where(mask[:,0,cc] > 0)[0]
+    single_mod.networks[0].layers[1].weight.data = deepcopy(
+        clone_mod.networks[0].layers[1].weight.data[:, non_zeroBs]).clone()
+    if single_mod.networks[0].layers[1].output_norm is not None:
+        single_mod.networks[0].layers[1].output_norm.running_mean.data = \
+            clone_mod.networks[0].layers[1].output_norm.running_mean.data[non_zeroBs].clone()
+        single_mod.networks[0].layers[1].output_norm.running_var.data = \
+            clone_mod.networks[0].layers[1].output_norm.running_var.data[non_zeroBs].clone()
+        single_mod.networks[0].layers[1].output_norm.weight.data = \
+            clone_mod.networks[0].layers[1].output_norm.weight.data[non_zeroBs].clone()
+        single_mod.networks[0].layers[1].output_norm.bias.data = \
+            clone_mod.networks[0].layers[1].output_norm.bias.data[non_zeroBs].clone()
+    # get relevant input weights in readout
+    bweights = clone_mod.networks[0].layers[2].weight.data.clone().reshape([NF, NXmod, NC])
+    single_mod.networks[0].layers[2].weight.data = deepcopy(bweights[non_zeroBs,:, cc].reshape([-1,1]))
+    single_mod.eval()
+    return single_mod
+
+
+def bmp_check( mod, dataset, LLs=None, num_cells=None, valset=None, cell_list=None ):
+    """
+    calculate binocular model performance (pred power and disparity power) for top num_cells in clone-model
+    it uses LLs to sort from top, but also can explicitly enter 'cell_list', which supercedes
+    cell_list trumps everything else
+
+    Args:
+        mod: clone binocular model with lots of outputs
+        dataset: dataset that can push through mod
+        LLs: LLs of the mod. Should be able to generate internally, but would need null models
+        num_cells: how many of the top cells/outputs to calculate with
+        valset: whether to use 'a' or 'b' (devault is 'b')
+        cell_list: superceded ordering by LLs, and just says which ccs to calculate performance for
+
+    Returns:
+        pps: predictive powers of whole clone array, but non-zero for only cells that were computed here
+        dps: disparity-predictive powers for same deal as pps
+        cell_order: list of cells that were probed
+    """
+    import torch
+
+    if valset is None:
+        valset='b'
+        #print('  Testing valset b')
+    mod = mod.to(torch.device('cpu'))
+    NF = mod.networks[0].layers[-1].input_dims[0]
+    NXmod = mod.networks[0].layers[-1].input_dims[1]
+    NC = mod.networks[-1].layers[0].output_dims[0]
+    numE = NF - mod.networks[0].layers[-2].num_inh
+    mask = deepcopy(mod.networks[0].layers[-1].mask.detach().numpy()).reshape([NF, NXmod, NC])
+    
+    if num_cells is None:
+        num_cells = NC
+    if cell_list is None:
+        assert LLs is not None, "Need to pass in LLs"
+        assert len(LLs) == NC, "LLs size mismatch given model"
+        cell_order = np.argsort(LLs)[range(NC-1, -1, -1)][:num_cells]
+    else:
+        if utils.is_int(cell_list):
+            cell_list = [cell_list]
+        cell_order = cell_list
+        num_cells = len(cell_list)
+        if LLs is None:
+            LLs = np.zeros(NC)-1
+    rs = mod(dataset[:])  # predicted responses acriss time
+    
+    pps = np.zeros([NC])
+    dps = np.zeros([NC,2])
+    
+    for ii in range(num_cells):
+        cc = cell_order[ii]
+        bmp = binocular_model_performance( 
+            data=dataset, cell_n=0, Rpred=rs[:,cc].detach(), valset=valset, verbose=False )
+        # Compute aspects of this model
+        ne =  int(np.sum(mask[:numE,0,cc]))
+        ni =  int(np.sum(mask[numE:,0,cc]))
+        pps[cc] = bmp['pred_powers'][0]
+        dps[cc,:] = deepcopy(bmp['disp_pred_powers'][:2])
+        if cell_list is not None:
+            print("%3d (%d,%d):\tpp = %6.4f  dp3 = %6.4f"%(cc, ne, ni, pps[cc], dps[cc,1]))
+        else:
+            print("%3d %7.5f (%d,%d):\tpp = %6.4f  dp3 = %6.4f"%(cc, LLs[cc], ne, ni, pps[cc], dps[cc,1]))
+    return pps, dps, cell_order
+
+
+def subsample_mask( numM, numB, alpha, conv_width=21, flatten=True, resample=False ):
+    """
+    Generate mask to give binocular filters (numB) access to some number of monocular filters
+    Args
+        numM: size of monocular pool
+        numB: number of binocular filters
+        alpha: how many monocular filters each gets to sample 
+    
+    Returns:
+        mask that is [numM, conv_width, numB] with alpha ones in each row (randomly selected)
+    """
+    mask = np.zeros([numM, conv_width, numB])
+    
+    if resample:
+        for ii in range(numB):
+            a = np.argsort(np.random.rand(numM))
+            mask[a[:alpha], :, ii] = 1.0
+    else:  # make more distributed by going through order explicitly once each time -- each filter used same amt
+        filt_sample = []
+        for ii in range(int(np.ceil(alpha*numB/numM))):
+            filt_sample = np.concatenate( (filt_sample, np.argsort(np.random.rand(numM)))).astype(int)
+        pos = 0
+        for ii in range(numB):
+            mask[filt_sample[pos+np.arange(alpha)], :, ii] = 1.0
+            pos += alpha
+            
+    if flatten:
+        return mask.reshape([-1, numB])
+    else:
+        return mask
+    
+    
+def EImask( numEIavail, numE, numI, num_filters, width=36, flatten=True, resample=False ):
+    
+    mask = np.zeros([numEIavail*2, width, num_filters])
+    mask[:numEIavail, :, :] = subsample_mask( 
+        numEIavail, num_filters, numE, conv_width=width, flatten=False, resample=resample)
+    if numI > 0:
+        mask[numEIavail:, :, :] = subsample_mask( 
+            numEIavail, num_filters, numI, conv_width=width, flatten=False, resample=resample)
+
+    if flatten:
+        return mask.reshape([-1, num_filters])
+    else:
+        return mask
+    
+    
+def convert2ST( mod0, temporal_basis=None, new_lags=16 ):
+    """
+    Convert temporal-basis-based model to spatiotemporal with new_lags
+    """
+    from NDNT.modules.layers.bilayers import BiConvLayer1D
+    import torch
+
+    assert temporal_basis is not None, "need to enter temporal basis"
+    converted_model = deepcopy(mod0)
+    mks = compute_mfilters( mod0, temporal_basis )
+    #print(mks.shape)
+    mfilt_layer_pars = deepcopy(mod0.ffnet_list[0]['layer_list'][0])
+    mfilt_layer_pars['input_dims'][-1] = new_lags
+    mfilt_layer_pars['filter_dims'][-1] = new_lags
+
+    Mlayer = BiConvLayer1D(**mfilt_layer_pars)
+    Mlayer.weight.data = torch.tensor(mks[:,:new_lags,:].reshape([-1, mks.shape[-1]]))
+    converted_model.networks[0].layers[0] = Mlayer
+    return converted_model
+
+
+def bmodel_regpath(
+    model, train_ds, val_ds, reg_type=None, reg_vals=None, ffnet_target=0, layer_target=0, 
+    average_pool=1, thresh=1.0, nullLL=None, hard_reset=False, export_all=False, verbose=True, device=None):
+    """
+    regpath for NDN model -- standard I think other than model-selection
+    """
+    import torch
+    from NDNT.utils import fit_lbfgs
+
+    assert reg_type is not None, "ERROR: Must specify reg_type"
+    assert average_pool <= 1, "average_pool mis-set"
+    
+    if reg_vals is None:
+        reg_vals = [1e-6, 0.0001, 0.001, 0.01, 0.1]
+    if device is None:
+        device=torch.device('cuda:0')
+
+    num_regs = len(reg_vals)
+    Rmods = []
+    LLsR = np.zeros(num_regs)
+    LLcells = []
+    if verbose:
+        print( "Reg path %s:"%reg_type, reg_vals)
+    LLbest = 0
+    for rr in range(num_regs):
+        sico_iter = deepcopy(model)
+        sico_iter.networks[ffnet_target].layers[layer_target].reg.vals[reg_type] = reg_vals[rr]
+        
+        if reg_type == 'd2x':  # then couple d2t
+            sico_iter.networks[ffnet_target].layers[layer_target].reg.vals['d2t'] = reg_vals[rr]/2
+            
+        if hard_reset:
+            sico_iter.networks[1].layers[0].weight.data[:,:] = 0.0
+            
+        sico_iter = sico_iter.to(device)
+        fit_lbfgs( sico_iter, train_ds[:], verbose=False)
+        
+        if nullLL is None:
+            LLs = sico_iter.eval_models(val_ds[:], null_adjusted=True)
+        else:
+            LLs = nullLL-LLs
+        sico_iter = sico_iter.to(torch.device('cpu'))
+        LLcells.append(deepcopy(LLs))
+
+        if len(LLs) == 1:
+            LL = LLs[0]
+        else:
+            if average_pool == 1:
+                LL = np.mean(LLs)
+            else:
+                num_skip = 1-int(np.round(len(LLs)*average_pool))
+                LL = np.mean(np.sort(LLs)[num_skip:])
+                
+        Rmods.append(deepcopy(sico_iter))
+        LLsR[rr] = LL
+        if (LL > LLbest):
+            print( "  %s-%d: %9.6f **"%(reg_type, rr, LL))
+            #BU.plot_mfilters(sico_iter, TB)
+            LLbest = LL
+        else:
+            print( "  %s-%d: %9.6f"%(reg_type, rr, LL))
+    
+    if thresh < 1.0:
+        reg_select = model_selection( LLsR, thresh, verbose=verbose )
+    else:
+        reg_select = np.argmax(LLsR)
+    reg_val = reg_vals[reg_select]
+    print( "Finished %s: selected reg"%reg_type, reg_val, "(%d)"%reg_select )
+    model_select = Rmods[reg_select]
+    if export_all:
+        export_dict = {
+            'Rmods': deepcopy(Rmods), 'LLsR': deepcopy(LLsR), "reg_vals": reg_vals,
+            'LLcells': LLcells}
+        return deepcopy(model_select), reg_val, export_dict
+    else:
+        return deepcopy(model_select), reg_val
+    
+    
+def sico_ffnetworks( 
+        num_mfilters=None, num_clones=None, numBE=None, numBI=None, mask=True,  # must enter
+        monoc_width=21, binoc_width=13, num_tkerns=8, NX=36, pos_constraint=False,  # default values
+        XregM=0.0001, TregM=0.0001, CregM=0.0001, MregB=0.001, LOCregR=0.1):  # regularization
+
+    from NDNT.modules.layers import BiConvLayer1D, NDNLayer, ConvLayer, MaskLayer, ChannelLayer
+    from NDNT.networks import FFnetwork
+
+    monoc_basis_par = BiConvLayer1D.layer_dict( 
+        input_dims=[1, 2*NX, 1, num_tkerns], num_filters=num_mfilters, 
+        filter_dims=[1, monoc_width, 1, num_tkerns],
+        norm_type=1, bias=False, initialize_center=True, NLtype='lin',
+        #output_norm='batch', window='hamming', 
+        reg_vals={'d2x':XregM, 'd2t':TregM, 'center':CregM })
+
+    bfilt_par = ConvLayer.layer_dict( 
+        num_filters=(numBE+numBI), num_inh=numBI, filter_dims=binoc_width, 
+        norm_type=1, pos_constraint=pos_constraint,
+        window='hamming', #output_norm='batch', #padding='valid',
+        bias=False, initialize_center=True,
+        NLtype='relu', reg_vals={'max_space':MregB})
+
+    if mask is None:
+        readout_par = NDNLayer.layer_dict(
+            num_filters=num_clones, bias=False, initialize_center=True, pos_constraint=True,
+            NLtype='lin', reg_vals={'glocalx': LOCregR})
+    else:
+        readout_par = MaskLayer.layer_dict(
+            num_filters=num_clones, bias=False, initialize_center=True, pos_constraint=True,
+            NLtype='lin', reg_vals={'glocalx': LOCregR})
+
+    if num_clones > 1:
+        comb_layer = ChannelLayer.layer_dict(num_filters=num_clones, NLtype='softplus', bias=False)
+    else: 
+        comb_layer = NDNLayer.layer_dict(num_filters=1, NLtype='softplus', bias=False)
+    comb_layer['weights_initializer'] = 'ones'
+
+    stim_net = FFnetwork.ffnet_dict( xstim_n='stim', layer_list = [monoc_basis_par, bfilt_par, readout_par])
+    net_comb = FFnetwork.ffnet_dict( xstim_n=None, ffnet_n=[0,1], layer_list=[comb_layer], ffnet_type='add')
+
+    return stim_net, net_comb
+
+
+def spatiotemporal_box_std( filts, t_edge, x_edge, filt_ns=None, to_plot=True, display_cc=None, subplot_info=None):
+    nx, nt, nf = filts.shape
+    if filt_ns is None:
+        filt_ns = range(nf)
+    ks = deepcopy(filts[:,:,filt_ns])
+    m = np.max(abs(ks))
+    tlags = np.arange(nt-t_edge, nt)
+    #print(tlags)
+    box1 = np.arange(x_edge)
+    box2 = np.arange(nx-x_edge, nx)
+    #print(box1,box2)
+    stds = np.mean([np.std(ks[:,tlags,:][box1,:,:]), np.std(ks[:,tlags,:][box2,:,:])])
+    #print(stds,m)
+    if to_plot:
+        import matplotlib.patches as patches
+        if display_cc is None:
+            utils.ss(1,6)
+            for ii in range(len(filt_ns)):
+                ax = plt.subplot(1,6,ii+1)
+                utils.imagesc(ks[...,ii], max=m)
+                ax.add_patch(patches.Rectangle(
+                    (box1[0]-0.5,tlags[0]-0.5), x_edge, t_edge, linewidth=1, edgecolor='r', facecolor='none'))
+                ax.add_patch(patches.Rectangle(
+                    (box2[0]-0.5,tlags[0]-0.5), x_edge, t_edge, linewidth=1, edgecolor='r', facecolor='none'))
+            plt.show()
+
+    return stds/m
+
+
+def spatiotemporal_std_display( filt2d, t_edge, x_edge, ax_handle, display_norm=None ):
+    import matplotlib.patches as patches
+    if display_norm is None:
+        display_norm = np.max(abs(filt2d))
+    nx,nt = filt2d.shape
+    tlags = np.arange(nt-t_edge, nt)
+    box1 = np.arange(x_edge)
+    box2 = np.arange(nx-x_edge, nx)
+
+    utils.imagesc(filt2d, max=display_norm)
+    ax_handle.add_patch(patches.Rectangle(
+        (box1[0]-0.5,tlags[0]-0.5), x_edge, t_edge, linewidth=1, edgecolor='r', facecolor='none'))
+    ax_handle.add_patch(patches.Rectangle(
+        (box2[0]-0.5,tlags[0]-0.5), x_edge, t_edge, linewidth=1, edgecolor='r', facecolor='none'))
+
+
+def smoothness_select( reg_info, t_edge=6, x_edge=6, display_n=0 ):
+    stds = np.zeros(5)
+    ws = []
+    for ii in range(5):
+        ws.append(reg_info['Rmods'][ii].get_weights())
+        stds[ii] = BU.spatiotemporal_box_std(ws[ii], t_edge, x_edge, to_plot=False ) 
+    thresh = np.mean([max(stds),min(stds)]) 
+    reg = np.where(stds < thresh)[0][0]
+    Xreg = reg_info['reg_vals'][reg]
+    
+    # STATUS DISPLAY
+    ss(1,5, rh=3)
+    ax = plt.subplot(1,5,1)
+    BU.spatiotemporal_std_display( ws[0][..., display_n], t_edge, x_edge, ax )
+    plt.title('Lowest d2x-reg')
+    ax = plt.subplot(1,5,2)
+    BU.spatiotemporal_std_display( ws[-1][..., display_n], t_edge, x_edge, ax )
+    plt.title('Highest d2x-reg')
+    ax = plt.subplot(1,5,3)
+    BU.spatiotemporal_std_display( ws[reg][..., display_n], t_edge, x_edge, ax )
+    plt.title('Chosen d2x-reg')
+    plt.subplot(154)
+    plt.plot(stds,'b')
+    plt.plot(stds,'b.')
+    plt.plot(reg,stds[reg],'go')
+    xs = plt.xlim()
+    plt.plot(xs, np.ones(2)*thresh,'r--')
+    plt.title('Box stdevs')
+
+    plt.subplot(155)
+    plt.plot(reg_info['LLsR'],'b')
+    plt.plot(reg_info['LLsR'],'b.')
+    plt.plot(reg, reg_info['LLsR'][reg],'go')
+    plt.title('LLs')
+    xs = plt.xlim()
+    plt.show()
+    print('d2xt reg:', Xreg)
+    return deepcopy(reg_info['Rmods'][reg])
+# END smoothness_select()
