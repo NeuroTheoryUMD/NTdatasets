@@ -1145,6 +1145,113 @@ def sico_ffnetworks(
     return stim_net, net_comb
 
 
+def clone_path_prepare_data(ee, cc, TB, nlags=16, check_performance=0, clone_model=None, num_clones=None, 
+                            dirname=[], datadir=[], device=None):
+    """
+    Load dataset and clone model from respective directories for regularization
+    So also translates models into 
+    Uses already-defined datadir and dirname respectively
+    
+    Args:
+        ee: expt number starting with zero
+        cc: cell number starting with zero
+        TB: temporal bases used to fit clones
+        
+    Returns:      return data_clone, data1, LLnull, base_model, LLs0
+        data_clone: dataset made to fit clone models
+        data1: dataset made to fit single copy of cell
+        LLnull: null model LL computed by fitting drift model
+        base_model: base clone model with spatiotemporal filters and nlags, if included
+        LLs: null-adjusted LLs of clone model, if included
+    """
+    import torch
+    from NTdatasets.generic import GenericDataset
+    from NTdatasets.cumming.binocular import binocular_single
+    from NDNT.modules.layers.ndnlayer import NDNLayer
+    
+    if device is None:
+        device = torch.device('cpu')
+
+    Dreg = 0.5
+    if clone_model is None:
+        if num_clones is None: # then assume its a file loading
+            filename = "E%sc%sclones.ndn"%(utils.filename_num2str(ee), utils.filename_num2str(cc))
+            base_model = NDN.load_model_zip(dirname+filename)
+            base_model.networks[0].layers[2].mask_is_set = True
+        else:
+            base_model = None
+            NX = 36
+    else:
+        base_model = clone_model
+    if base_model is not None:
+        num_clones = base_model.networks[-1].layers[0].output_dims[0]
+        NX = base_model.networks[0].layers[2].input_dims[1]
+        
+    old_nlags, num_tk = TB.shape
+
+    # Make datasets
+    data_clone = binocular_single( expt_num=ee+1, datadir=datadir, time_embed=2, skip_lags=1, num_lags=old_nlags )
+    data1 = binocular_single( expt_num=ee+1, datadir=datadir, time_embed=2, skip_lags=1, num_lags=nlags )
+    robs = deepcopy(data1.robs)
+    dfs = deepcopy(data1.dfs)
+    data_clone.robs = np.repeat(deepcopy(robs[:,[cc]]), num_clones, axis=1)
+    data_clone.dfs = np.repeat(deepcopy(dfs[:,[cc]]), num_clones, axis=1)
+    data1.set_cells(cc)
+
+    # Add drift capacities and calc drift model
+    block_length = 3600  # 60 sec
+    anchors = np.arange(0,data_clone.NT, block_length)
+    drift_tents = data_clone.design_matrix_drift(
+        data_clone.NT, anchors, zero_left=False, zero_right=True, const_right=False)
+    data_clone.Xdrift = torch.tensor(drift_tents, dtype=torch.float32)
+    data1.Xdrift = torch.tensor(drift_tents, dtype=torch.float32)
+    NA = drift_tents.shape[1]
+
+    # Make tent-basis stim for clone model LL extraction (with-tent-basis thing)
+    if base_model is not None:
+        Xstim = torch.einsum('bxt,tf->bxf', 
+                             data_clone.stim.reshape([-1,2*NX,old_nlags]), 
+                             torch.tensor(TB, dtype=torch.float32) )
+        data_clone.stim = Xstim.reshape([len(data_clone), -1])
+        data_clone.stim_dims[-1] = num_tk
+
+    # Calculate LLs because why-not: need it but dont need drift models after that
+    train_ds = GenericDataset(data_clone[data_clone.train_inds], device=device)
+
+    drift_pars1N = NDNLayer.layer_dict( 
+        input_dims=[1,1,1,NA], num_filters=num_clones, bias=False, norm_type=0, 
+        NLtype='softplus', reg_vals={'d2t': Dreg, 'bcs':{'d2t':0} } )
+    drift_mod = NDN(layer_list = [drift_pars1N], loss_type='poisson').to(device)
+    drift_mod.networks[0].xstim_n = 'Xdrift'
+    utils.fit_lbfgs( drift_mod, train_ds[:], verbose=False)
+    drift_mod = drift_mod.to(device)
+    LLnull = drift_mod.eval_models(data_clone[data1.val_indsA], null_adjusted=False)[0]
+    print('  c%d: LLnull = %0.6f'%(cc, LLnull))
+
+    if base_model is not None:
+        # Calculate LLs of original model before converting 
+        LLs0 = LLnull-base_model.eval_models(data_clone[data1.val_indsA], null_adjusted=False)
+        print('  LLs0 original clone mean:', np.mean(LLs0))
+        del train_ds
+        torch.cuda.empty_cache()    
+        
+        if check_performance > 0:
+            _ = bmp_check( base_model, data_clone, LLs0, check_performance ) 
+        
+        # Convert dataset back to handle spatiotemporal
+        data_clone.stim = data1.stim.clone()
+        data_clone.stim_dims[-1] = nlags
+
+        base_model = convert2ST( base_model, TB, nlags )  # note this will not be normalized correctly
+    else:
+        LLs0 = []
+        
+    if base_model is not None:
+        return data_clone, data1, base_model, LLnull, LLs0
+    else: 
+        return data_clone, data1, LLnull
+
+
 def spatiotemporal_box_std( filts, t_edge, x_edge, filt_ns=None, to_plot=True, display_cc=None, subplot_info=None):
     nx, nt, nf = filts.shape
     if filt_ns is None:
@@ -1191,25 +1298,26 @@ def spatiotemporal_std_display( filt2d, t_edge, x_edge, ax_handle, display_norm=
 
 
 def smoothness_select( reg_info, t_edge=6, x_edge=6, display_n=0 ):
-    stds = np.zeros(5)
+    num_regs = len(reg_info['LLsR'])
+    stds = np.zeros(num_regs)
     ws = []
-    for ii in range(5):
+    for ii in range(num_regs):
         ws.append(reg_info['Rmods'][ii].get_weights())
-        stds[ii] = BU.spatiotemporal_box_std(ws[ii], t_edge, x_edge, to_plot=False ) 
+        stds[ii] = spatiotemporal_box_std(ws[ii], t_edge, x_edge, to_plot=False ) 
     thresh = np.mean([max(stds),min(stds)]) 
     reg = np.where(stds < thresh)[0][0]
     Xreg = reg_info['reg_vals'][reg]
     
     # STATUS DISPLAY
-    ss(1,5, rh=3)
+    utils.ss(1,5, rh=3)
     ax = plt.subplot(1,5,1)
-    BU.spatiotemporal_std_display( ws[0][..., display_n], t_edge, x_edge, ax )
+    spatiotemporal_std_display( ws[0][..., display_n], t_edge, x_edge, ax )
     plt.title('Lowest d2x-reg')
     ax = plt.subplot(1,5,2)
-    BU.spatiotemporal_std_display( ws[-1][..., display_n], t_edge, x_edge, ax )
+    spatiotemporal_std_display( ws[-1][..., display_n], t_edge, x_edge, ax )
     plt.title('Highest d2x-reg')
     ax = plt.subplot(1,5,3)
-    BU.spatiotemporal_std_display( ws[reg][..., display_n], t_edge, x_edge, ax )
+    spatiotemporal_std_display( ws[reg][..., display_n], t_edge, x_edge, ax )
     plt.title('Chosen d2x-reg')
     plt.subplot(154)
     plt.plot(stds,'b')
@@ -1228,4 +1336,33 @@ def smoothness_select( reg_info, t_edge=6, x_edge=6, display_n=0 ):
     plt.show()
     print('d2xt reg:', Xreg)
     return deepcopy(reg_info['Rmods'][reg])
+
+
+def binocular_filter_shift( sico0, verbose=True ):
+    import torch    
+    wB = sico0.get_weights(layer_target=1)
+    ni, fw, NBF = wB.shape
+    clrs='bgr'
+    shifts = np.zeros(NBF, dtype=int) #[0,0,0]
+    for ii in range(NBF):
+        dist = np.sum(abs(wB[...,ii]),axis=0)
+        shifts[ii] = -int(np.round(np.sum((np.arange(fw)-(fw-1)/2)*dist)/np.sum(dist)))
+    if verbose:
+        print('Shifts:', shifts)
+    
+    # Move the torch-weights
+    wB = sico0.networks[0].layers[1].weight.data.detach().reshape([ni, fw, NBF])
+    wB2 = torch.zeros(wB.shape, dtype=torch.float32)
+    for ii in range(NBF):
+        wB2[..., ii] = torch.roll(wB[..., ii].clone(), shifts[ii], dims=1)
+
+    wR = sico0.networks[0].layers[2].weight.data.detach().reshape([NBF, -1])
+    wR2 = torch.zeros(wR.shape, dtype=torch.float32)
+    for ii in range(NBF):
+        wR2[ii,:] = torch.roll(abs(wR[ii,:].clone()), -shifts[ii])
+        
+    sico1 = deepcopy(sico0)
+    sico1.networks[0].layers[1].weight.data = wB2.reshape([-1,NBF])
+    sico1.networks[0].layers[2].weight.data = wR2.reshape([-1,1])
+    return sico1
 # END smoothness_select()
