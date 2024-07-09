@@ -1025,7 +1025,7 @@ def convert2ST( mod0, temporal_basis=None, new_lags=16 ):
 
 
 def bmodel_regpath(
-    model, train_ds, val_ds, reg_type=None, reg_vals=None, ffnet_target=0, layer_target=0, 
+    model, train_ds, val_ds, reg_type=None, reg_vals=None, ffnet_target=0, layer_target=0, couple_xt=True,
     average_pool=1, thresh=1.0, nullLL=None, hard_reset=False, export_all=False, verbose=True, device=None):
     """
     regpath for NDN model -- standard I think other than model-selection
@@ -1052,7 +1052,7 @@ def bmodel_regpath(
         sico_iter = deepcopy(model)
         sico_iter.networks[ffnet_target].layers[layer_target].reg.vals[reg_type] = reg_vals[rr]
         
-        if reg_type == 'd2x':  # then couple d2t
+        if (reg_type == 'd2x') and couple_xt:  # then couple d2t
             sico_iter.networks[ffnet_target].layers[layer_target].reg.vals['d2t'] = reg_vals[rr]/2
             
         if hard_reset:
@@ -1105,7 +1105,7 @@ def bmodel_regpath(
 def sico_ffnetworks( 
         num_mfilters=None, num_clones=None, numBE=None, numBI=None, mask=True,  # must enter
         monoc_width=21, binoc_width=13, num_tkerns=8, NX=36, pos_constraint=False,  # default values
-        XregM=0.0001, TregM=0.0001, CregM=0.0001, MregB=0.001, LOCregR=0.1):  # regularization
+        XregM=0.0001, CregM=0.001, MregB=0.001, LOCregR=0.1):  # regularization
 
     from NDNT.modules.layers import BiConvLayer1D, NDNLayer, ConvLayer, MaskLayer, ChannelLayer
     from NDNT.networks import FFnetwork
@@ -1115,7 +1115,8 @@ def sico_ffnetworks(
         filter_dims=[1, monoc_width, 1, num_tkerns],
         norm_type=1, bias=False, initialize_center=True, NLtype='lin',
         #output_norm='batch', window='hamming', 
-        reg_vals={'d2x':XregM, 'd2t':TregM, 'center':CregM })
+        reg_vals={'d2x':XregM, 'center':CregM })
+        #reg_vals={'d2x':XregM, 'd2t':TregM, 'center':CregM })
 
     bfilt_par = ConvLayer.layer_dict( 
         num_filters=(numBE+numBI), num_inh=numBI, filter_dims=binoc_width, 
@@ -1342,6 +1343,8 @@ def binocular_filter_shift( sico0, verbose=True ):
     import torch    
     wB = sico0.get_weights(layer_target=1)
     ni, fw, NBF = wB.shape
+    Nout = sico0.networks[-1].output_dims[0]
+
     clrs='bgr'
     shifts = np.zeros(NBF, dtype=int) #[0,0,0]
     for ii in range(NBF):
@@ -1356,13 +1359,13 @@ def binocular_filter_shift( sico0, verbose=True ):
     for ii in range(NBF):
         wB2[..., ii] = torch.roll(wB[..., ii].clone(), shifts[ii], dims=1)
 
-    wR = sico0.networks[0].layers[2].weight.data.detach().reshape([NBF, -1])
+    wR = sico0.networks[0].layers[2].weight.data.detach().reshape([NBF, -1, Nout])
     wR2 = torch.zeros(wR.shape, dtype=torch.float32)
     for ii in range(NBF):
-        wR2[ii,:] = torch.roll(abs(wR[ii,:].clone()), -shifts[ii])
+        wR2[ii,:,:] = torch.roll(abs(wR[ii,:,:].clone()), -shifts[ii], dims=0)
         
     sico1 = deepcopy(sico0)
     sico1.networks[0].layers[1].weight.data = wB2.reshape([-1,NBF])
-    sico1.networks[0].layers[2].weight.data = wR2.reshape([-1,1])
+    sico1.networks[0].layers[2].weight.data = wR2.reshape([-1,Nout])
     return sico1
 # END smoothness_select()
