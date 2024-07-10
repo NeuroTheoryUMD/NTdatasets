@@ -1017,6 +1017,9 @@ def convert2ST( mod0, temporal_basis=None, new_lags=16 ):
     mfilt_layer_pars = deepcopy(mod0.ffnet_list[0]['layer_list'][0])
     mfilt_layer_pars['input_dims'][-1] = new_lags
     mfilt_layer_pars['filter_dims'][-1] = new_lags
+    # ALSO CONVERT relevant parts of ffnet_list
+    converted_model.ffnet_list[0]['layer_list']['input_dims'][-1] = new_lags
+    converted_model.ffnet_list[0]['layer_list']['filter_dims'][-1] = new_lags
 
     Mlayer = BiConvLayer1D(**mfilt_layer_pars)
     Mlayer.weight.data = torch.tensor(mks[:,:new_lags,:].reshape([-1, mks.shape[-1]]))
@@ -1146,7 +1149,7 @@ def sico_ffnetworks(
     return stim_net, net_comb
 
 
-def clone_path_prepare_data(ee, cc, TB, nlags=16, check_performance=0, clone_model=None, num_clones=None, 
+def clone_path_prepare_data(ee, cc, TB, nlags=12, clone_model=None, num_clones=None, check_performance=0, 
                             dirname=[], datadir=[], device=None):
     """
     Load dataset and clone model from respective directories for regularization
@@ -1158,10 +1161,11 @@ def clone_path_prepare_data(ee, cc, TB, nlags=16, check_performance=0, clone_mod
         cc: cell number starting with zero
         TB: temporal bases used to fit clones
         
-    Returns:      return data_clone, data1, LLnull, base_model, LLs0
+    Returns:
         data_clone: dataset made to fit clone models
         data1: dataset made to fit single copy of cell
         LLnull: null model LL computed by fitting drift model
+        drift_terms: drift terms for number of clones specified
         base_model: base clone model with spatiotemporal filters and nlags, if included
         LLs: null-adjusted LLs of clone model, if included
     """
@@ -1209,7 +1213,7 @@ def clone_path_prepare_data(ee, cc, TB, nlags=16, check_performance=0, clone_mod
     NA = drift_tents.shape[1]
 
     # Make tent-basis stim for clone model LL extraction (with-tent-basis thing)
-    if base_model is not None:
+    if (base_model is not None) or (nlags is None):
         Xstim = torch.einsum('bxt,tf->bxf', 
                              data_clone.stim.reshape([-1,2*NX,old_nlags]), 
                              torch.tensor(TB, dtype=torch.float32) )
@@ -1228,6 +1232,7 @@ def clone_path_prepare_data(ee, cc, TB, nlags=16, check_performance=0, clone_mod
     drift_mod = drift_mod.to(device)
     LLnull = drift_mod.eval_models(data_clone[data1.val_indsA], null_adjusted=False)[0]
     print('  c%d: LLnull = %0.6f'%(cc, LLnull))
+    drift_terms = drift_mod.networks[0].layers[0].weight.data.clone().cpu()
 
     if base_model is not None:
         # Calculate LLs of original model before converting 
@@ -1240,17 +1245,15 @@ def clone_path_prepare_data(ee, cc, TB, nlags=16, check_performance=0, clone_mod
             _ = bmp_check( base_model, data_clone, LLs0, check_performance ) 
         
         # Convert dataset back to handle spatiotemporal
-        data_clone.stim = data1.stim.clone()
-        data_clone.stim_dims[-1] = nlags
+        if nlags is not None:
+            data_clone.stim = data1.stim.clone()
+            data_clone.stim_dims[-1] = nlags
 
-        base_model = convert2ST( base_model, TB, nlags )  # note this will not be normalized correctly
-    else:
-        LLs0 = []
+            base_model = convert2ST( base_model, TB, nlags )  # note this will not be normalized correctly
         
-    if base_model is not None:
-        return data_clone, data1, base_model, LLnull, LLs0
+        return data_clone, data1, drift_terms, base_model, LLnull, LLs0
     else: 
-        return data_clone, data1, LLnull
+        return data_clone, data1, LLnull, drift_terms
 
 
 def spatiotemporal_box_std( filts, t_edge, x_edge, filt_ns=None, to_plot=True, display_cc=None, subplot_info=None):
