@@ -1018,8 +1018,8 @@ def convert2ST( mod0, temporal_basis=None, new_lags=16 ):
     mfilt_layer_pars['input_dims'][-1] = new_lags
     mfilt_layer_pars['filter_dims'][-1] = new_lags
     # ALSO CONVERT relevant parts of ffnet_list
-    converted_model.ffnet_list[0]['layer_list']['input_dims'][-1] = new_lags
-    converted_model.ffnet_list[0]['layer_list']['filter_dims'][-1] = new_lags
+    converted_model.ffnet_list[0]['layer_list'][0]['input_dims'][-1] = new_lags
+    converted_model.ffnet_list[0]['layer_list'][0]['filter_dims'][-1] = new_lags
 
     Mlayer = BiConvLayer1D(**mfilt_layer_pars)
     Mlayer.weight.data = torch.tensor(mks[:,:new_lags,:].reshape([-1, mks.shape[-1]]))
@@ -1164,10 +1164,11 @@ def clone_path_prepare_data(ee, cc, TB, nlags=12, clone_model=None, num_clones=N
     Returns:
         data_clone: dataset made to fit clone models
         data1: dataset made to fit single copy of cell
-        LLnull: null model LL computed by fitting drift model
-        drift_terms: drift terms for number of clones specified
-        base_model: base clone model with spatiotemporal filters and nlags, if included
-        LLs: null-adjusted LLs of clone model, if included
+        clone_path_info: dictionary with the following info (if applicable)
+            LLnull: null model LL computed by fitting drift model
+            drift_terms: drift terms for number of clones specified
+            base_model: base clone model with spatiotemporal filters and nlags, if included
+            LLs: null-adjusted LLs of clone model, if included
     """
     import torch
     from NTdatasets.generic import GenericDataset
@@ -1196,7 +1197,11 @@ def clone_path_prepare_data(ee, cc, TB, nlags=12, clone_model=None, num_clones=N
 
     # Make datasets
     data_clone = binocular_single( expt_num=ee+1, datadir=datadir, time_embed=2, skip_lags=1, num_lags=old_nlags )
-    data1 = binocular_single( expt_num=ee+1, datadir=datadir, time_embed=2, skip_lags=1, num_lags=nlags )
+    if nlags is not None:
+        data1 = binocular_single( expt_num=ee+1, datadir=datadir, time_embed=2, skip_lags=1, num_lags=nlags )
+    else:
+        data1 = binocular_single( expt_num=ee+1, datadir=datadir, time_embed=2, skip_lags=1, num_lags=old_nlags )
+        
     robs = deepcopy(data1.robs)
     dfs = deepcopy(data1.dfs)
     data_clone.robs = np.repeat(deepcopy(robs[:,[cc]]), num_clones, axis=1)
@@ -1234,6 +1239,7 @@ def clone_path_prepare_data(ee, cc, TB, nlags=12, clone_model=None, num_clones=N
     print('  c%d: LLnull = %0.6f'%(cc, LLnull))
     drift_terms = drift_mod.networks[0].layers[0].weight.data.clone().cpu()
 
+    clone_path_info = {'drift_terms': drift_terms, 'LLnull': LLnull, 'num_lags': nlags}
     if base_model is not None:
         # Calculate LLs of original model before converting 
         LLs0 = LLnull-base_model.eval_models(data_clone[data1.val_indsA], null_adjusted=False)
@@ -1250,10 +1256,11 @@ def clone_path_prepare_data(ee, cc, TB, nlags=12, clone_model=None, num_clones=N
             data_clone.stim_dims[-1] = nlags
 
             base_model = convert2ST( base_model, TB, nlags )  # note this will not be normalized correctly
-        
-        return data_clone, data1, drift_terms, base_model, LLnull, LLs0
-    else: 
-        return data_clone, data1, LLnull, drift_terms
+
+        clone_path_info['base_model'] = base_model 
+        clone_path_info['LLs'] = LLs0
+    
+    return data_clone, data1, clone_path_info
 
 
 def spatiotemporal_box_std( filts, t_edge, x_edge, filt_ns=None, to_plot=True, display_cc=None, subplot_info=None):
