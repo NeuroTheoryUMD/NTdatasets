@@ -1355,13 +1355,13 @@ def binocular_filter_shift( sico0, verbose=True ):
     ni, fw, NBF = wB.shape
     Nout = sico0.networks[-1].output_dims[0]
 
-    clrs='bgr'
+    #clrs='bgr'
     shifts = np.zeros(NBF, dtype=int) #[0,0,0]
     for ii in range(NBF):
         dist = np.sum(abs(wB[...,ii]),axis=0)
         shifts[ii] = -int(np.round(np.sum((np.arange(fw)-(fw-1)/2)*dist)/np.sum(dist)))
     if verbose:
-        print('Shifts:', shifts)
+        print('  Binocular shifts:', shifts)
     
     # Move the torch-weights
     wB = sico0.networks[0].layers[1].weight.data.detach().reshape([ni, fw, NBF])
@@ -1378,4 +1378,38 @@ def binocular_filter_shift( sico0, verbose=True ):
     sico1.networks[0].layers[1].weight.data = wB2.reshape([-1,NBF])
     sico1.networks[0].layers[2].weight.data = wR2.reshape([-1,Nout])
     return sico1
-# END smoothness_select()
+# END binocular_filter_shift()
+
+
+def monocular_filter_shift( sico0, verbose=True ):
+    """
+    Shifts the filters in the monocular layer, and adjusts the filters in the binocular layer as a result.
+    """
+    import torch    
+    wM = sico0.get_weights(layer_target=0)
+    fw, nt, NMF = wM.shape
+    Nout = sico0.networks[0].layers[1].output_dims[0]
+
+    shifts = np.zeros(NMF, dtype=int) #[0,0,0]
+    for ii in range(NMF):
+        dist = np.sum(abs(wM[...,ii]),axis=1)
+        shifts[ii] = -int(np.round(np.sum((np.arange(fw)-(fw-1)/2)*dist)/np.sum(dist)))
+    if verbose:
+        print('  Monocular shifts:', shifts)
+    
+    # Move the torch-weights
+    wM = sico0.networks[0].layers[0].weight.data.detach().reshape([fw, nt, NMF])
+    wM2 = torch.zeros(wM.shape, dtype=torch.float32)
+    for ii in range(NMF):
+        wM2[..., ii] = torch.roll(wM[..., ii].clone(), shifts[ii], dims=0)
+
+    wB = sico0.networks[0].layers[1].weight.data.detach().reshape([NMF, -1, Nout])
+    wB2 = torch.zeros(wB.shape, dtype=torch.float32)
+    for ii in range(NMF):
+        wB2[ii,:,:] = torch.roll(abs(wB[ii,:,:].clone()), -shifts[ii], dims=0)
+        
+    sico1 = deepcopy(sico0)
+    sico1.networks[0].layers[0].weight.data = wM2.reshape([-1, NMF])
+    sico1.networks[0].layers[1].weight.data = wB2.reshape([-1, Nout])
+    return sico1
+# END monocular_filter_shift()
