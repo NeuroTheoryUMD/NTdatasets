@@ -520,7 +520,7 @@ def binocular_model_performance( data=None, cell_n=0, Rpred=None, valset=None, v
 
 
 ## Binocular model utilities
-def compute_Mfilters( tkerns=None, filts=None, mod=None, to_plot=True, to_output=False):
+def compute_mfilters( tkerns=None, filts=None, mod=None, to_plot=True, to_output=False):
     """
     Compute a spatiotemporal filter from temporal kernels convolved with second-layer filter
     
@@ -599,7 +599,7 @@ def compute_binocular_filters_old(binoc_mod, to_plot=True, cmap=None, time_rever
         if (bnet == 0) & (blayer == 1): # then mfilters are just first layer
             mfilters = binoc_mod.get_weights(time_reverse=time_reverse)
         else:  # construct using tkerns
-            mfilters = compute_Mfilters(mod=binoc_mod, to_output=True, to_plot=False) 
+            mfilters = compute_mfilters(mod=binoc_mod, to_output=True, to_plot=False) 
             if time_reverse:
                 print('Warning: time_reverse not implemented in this case.')
     NXM, num_lags, NF = mfilters.shape
@@ -652,12 +652,15 @@ def compute_binocular_filters_old(binoc_mod, to_plot=True, cmap=None, time_rever
         return bifilts
 
 
-def plot_sico_readout( sico, cell_n=None, rh=None ):
+def plot_sico_readout( sico, cell_n=None, rh=None, row_mult=0.2 ):
     """
     Plot the readout weights of the SICO model
 
     Args:
         sico: SICO model
+        cell_n: select which clone to plot if clone model (default: None, assumes single model)
+        rh: height of plot, overriding scaling-per line (row_mult) (default: None)
+        row_mult: normal way to determine depth of plot: inches per line (default: 0.4)
 
     Returns:
         None
@@ -674,14 +677,17 @@ def plot_sico_readout( sico, cell_n=None, rh=None ):
     NE = NF-NI
     w[:, NE:] *= -1
 
+    if rh is None:
+        rh = row_mult*NF+0.55 #np.minimum(0.4*NF,2)
+        # added 0.55 is estimated size of x-axis ticks and other vertical space
     if cell_n is None:
-        if rh is None:
-            rh = 0.4*NF #np.minimum(0.4*NF,2)
-        utils.subplot_setup(1,1,fig_width=6, row_height=rh)
+        utils.subplot_setup(1,1, row_height=rh, fig_width=6)
 
-    imagesc(w, cmap='bwr', balanced=True)
+    imagesc(w, cmap='bwr', balanced=True, axis_labels=False)
     if cell_n is None:
         plt.show()
+# END plot_sico_readout()
+
 
 ### NEW FUNCTIONS ADDED 2024 ###
 def compute_mfilters( mod, tkerns=None):
@@ -693,7 +699,7 @@ def compute_mfilters( mod, tkerns=None):
         tkerns: temporal kernels, if none (default) than just returns first layer (but shouldn't)
 
     Returns:
-        mfilts
+        mfilts: 3-d array space x lags x number of filters
     """
     assert tkerns is not None, "No temporal basis specified."
     k = mod.get_weights()
@@ -703,6 +709,7 @@ def compute_mfilters( mod, tkerns=None):
         print(  "Warning: no temporal kernels specified, just using get_weights()" )
         mfilts = k    
     return mfilts
+# END compute_mfilters()
 
 
 def dist_mean( p ):
@@ -776,22 +783,46 @@ def compute_bfilters( binoc_mod, tkerns=None, width=None, newlags=None, skip_lag
 
 
 def plot_mfilters( model, tkerns=None, flip=True, axis_labels=False, max_lags=12, rh=2 ):
-        mfilts = compute_mfilters( model, tkerns=tkerns)
-        NF = mfilts.shape[-1]
+    """
+    Plots mfilters (first-layer monocular filters) of sico models, using compute_mfilters to calcuate. 
 
-        nrows = int(np.ceil(NF/6))
-        utils.ss(nrows,6, rh=rh)
-        for ii in range(NF):
-            plt.subplot(nrows,6,ii+1)
-            if flip:
-                utils.imagesc(np.flip(mfilts[:, :max_lags, ii],axis=1), axis_labels=axis_labels)
-            else:
-                utils.imagesc(mfilts[:, :max_lags, ii], axis_labels=axis_labels)
-        plt.show()
+    Inputs:
+        model: sico model to plot monocular filters of
+        tkerns: temporal kernels used in sico model (default: None assumes no temporal filters used)
+        flip: whether to have lag-0 at bottom and go up (default: flip=True) or opposite
+        axis_labels: whether to display axis_labels (default: False=No)
+        max_lags: number of lags to trim at (default: 12)
+        rh: row height in units of inches (default: 2) 
+    """
+    mfilts = compute_mfilters( model, tkerns=tkerns)
+    NF = mfilts.shape[-1]
+
+    nrows = int(np.ceil(NF/6))
+    utils.ss(nrows,6, rh=rh)
+    for ii in range(NF):
+        plt.subplot(nrows,6,ii+1)
+        if flip:
+            utils.imagesc(np.flip(mfilts[:, :max_lags, ii],axis=1), axis_labels=axis_labels)
+        else:
+            utils.imagesc(mfilts[:, :max_lags, ii], axis_labels=axis_labels)
+    plt.show()
+# END plot_mfilters()
 
 
-def plot_bfilters( model, TB=None, max_lags=12, rh=2, flip=True, axis_labels=False ):
-    kb = compute_bfilters( model, TB )
+def plot_bfilters( model, tkerns=None, flip=True, axis_labels=False, max_lags=12, rh=2 ):
+    """
+    Plots bfilters (second-layer binocular filters) of sico models, using compute_bfilters to calcuate. 
+
+    Inputs:
+        model: sico model to plot monocular filters of
+        tkerns: temporal kernels used in sico model (default: None assumes no temporal filters used)
+        flip: whether to have lag-0 at bottom and go up (default: flip=True) or opposite
+        axis_labels: whether to display axis_labels (default: False=No)
+        max_lags: number of lags to trim at (default: 12)
+        rh: row height in units of inches (default: 2) 
+    """
+
+    kb = compute_bfilters( model, tkerns )
     _, fw, nlags, NF = kb.shape
     nexc = NF-model.networks[0].layers[1].num_inh
 
@@ -810,11 +841,24 @@ def plot_bfilters( model, TB=None, max_lags=12, rh=2, flip=True, axis_labels=Fal
         else:
             plt.title("%d: INH %d "%(ii, ii-nexc))
     plt.show()
+# END plot_bfilters()
 
 
 #### NEW CLONE UTILS ####
-def model_selection( LLs, thresh=0.99, verbose=False, LLthresh=None ):
-    # Model selection from regularization -- find smallest regularization value within thresh of max
+def clone_model_selection( LLs, thresh=0.99, LLthresh=None, verbose=False ):
+    """
+    Model selection from regularization -- find smallest regularization value within thresh of max
+    This is made for first-stage clone-sico models that have an ordering (from small to big)
+    Choses earliest model that has LL greater than threshold
+
+    Input:
+        LLs: LL list for all the clones
+        thresh: fraction of max that threshold is selected for (default: 0.99)
+        LLthresh: explicit LL-threshold: overrides value of thresh, but default=None
+        verbose: to print inner workings or not
+    Returns:
+        selection: index of clone that fits criteria
+    """
     if LLthresh is None:
         LLthresh = thresh*max(LLs)
     a = np.where(LLs >= LLthresh)[0]
@@ -823,9 +867,22 @@ def model_selection( LLs, thresh=0.99, verbose=False, LLthresh=None ):
         print("  %d LLs meet criteria (%0.5f out of %0.5f)"%(len(a), LLthresh, max(LLs)))
         print("  Using %d: (max at %d out of %d)"%(selection, np.argmax(LLs), len(LLs)))
     return selection
+# END model_selection()
 
 
-def reconstitute_bmodel( clone_mod, cc ):
+def reconstitute_bmodel( clone_mod, cc, verbose=True ):
+    """
+    SiCo-model specific: makes reduced single-neuron model from larger-scale clone model,
+    which generates many different instances of a single neuron model.
+
+    Args:
+        clone_mod: clone-sico model with many instances of single neuron models
+        cc: which clone to take
+        verbose: whether to suppress output (default: verbose=True)
+    
+    Returns:
+        single_mod: sico single-neuron model
+    """
     ### start with exact copy 
     import torch
     clone_mod = clone_mod.to(torch.device('cpu'))
@@ -843,7 +900,8 @@ def reconstitute_bmodel( clone_mod, cc ):
     # Extract how many filters getting pulled
     ne =  int(np.sum(mask[:numE,0,cc]))
     ni =  int(np.sum(mask[numE:,0,cc]))
-    print( "Model extraction: %d exc, %d inh filters"%(ne, ni))
+    if verbose:
+        print( "Model extraction: %d exc, %d inh filters"%(ne, ni))
 
     # modification of binocular layer
     stim_net['layer_list'][1]['num_filters'] = ne+ni
@@ -889,6 +947,7 @@ def reconstitute_bmodel( clone_mod, cc ):
     single_mod.networks[0].layers[2].weight.data = deepcopy(bweights[non_zeroBs,:, cc].reshape([-1,1]))
     single_mod.eval()
     return single_mod
+# END reconstitute_bmodel()
 
 
 def bmp_check( mod, dataset, LLs=None, num_cells=None, valset=None, cell_list=None ):
@@ -1028,17 +1087,42 @@ def convert2ST( mod0, temporal_basis=None, new_lags=16 ):
 
 
 def bmodel_regpath(
-    model, train_ds, val_ds, reg_type=None, reg_vals=None, ffnet_target=0, layer_target=0, couple_xt=True,
-    average_pool=1, thresh=1.0, nullLL=None, hard_reset=False, export_all=False, verbose=True, device=None):
+    model, train_ds, val_ds, reg_type=None, reg_vals=None, ffnet_target=0, layer_target=0, 
+    nullLL=None, couple_xt=True, hard_reset=False, extended_loop=True, average_pool=1,
+    verbose=True, device=None):
     """
-    regpath for NDN model -- standard I think other than model-selection
+    regularization-path for NDN model -- standard I think other than using specific details of the model
+
+    Args:
+        model: model to be regularized
+        train_ds: dataset to be used for training (generic, on device already)
+        val_ds: dataset for validation, complementary to train_ds
+        reg_type: type of regularization (required)
+        reg_vals: list of regularization values (default: [1e-6, 0.0001, 0.001, 0.01, 0.1])
+        ffnet_target: which ffnetwork that containes layer to regularize (default: 0)
+        layer_target: which layer to regularize (default 0)
+        nullLL: give LL-null of model so that can correctly compute LLs relative to null model. Default is
+            None, where it will use the embedded null_adjusted=True of eval_models
+        couple_xt: whether to make d2t=d2x/2 coupled to 'd2x' when its the reg_type (default: True)
+        extended_loop: whether to continue with reg_vals of factors of 10 if best value is last (default: True)
+        hard_reset: when set to 'True': will zero out drift model to force model to fit longer (default: False)
+        average_pool: if population model, which fraction of LLs to average over to determine 
+            the best-reg (default: 1=all)
+        verbose: self-explanatory (default: True)
+        device: which device to use (default cuda:0)
+
+    Returns:
+        model_select: selected model
+        reg_val: selected reg value from the reg_vals list
+        export_dict: dictionary with detailed information of reg path
     """
     import torch
     from NDNT.utils import fit_lbfgs
 
     assert reg_type is not None, "ERROR: Must specify reg_type"
     assert average_pool <= 1, "average_pool mis-set"
-    
+    MAX_REGS = 16
+
     if reg_vals is None:
         reg_vals = [1e-6, 0.0001, 0.001, 0.01, 0.1]
     if device is None:
@@ -1050,8 +1134,14 @@ def bmodel_regpath(
     LLcells = []
     if verbose:
         print( "Reg path %s:"%reg_type, reg_vals)
-    LLbest = 0
-    for rr in range(num_regs):
+    if isinstance(reg_vals, list):
+        reg_vals = np.array(reg_vals, dtype=np.float32)
+
+    ## This is a loop so that regularization path can be extended until LLs go down
+    LLbest, rr = 0, 0
+    #for rr in range(num_regs):
+    while rr < np.minimum(len(reg_vals), MAX_REGS):
+
         sico_iter = deepcopy(model)
         sico_iter.networks[ffnet_target].layers[layer_target].reg.vals[reg_type] = reg_vals[rr]
         
@@ -1086,25 +1176,30 @@ def bmodel_regpath(
             print( "  %s-%d: %9.6f **"%(reg_type, rr, LL))
             #BU.plot_mfilters(sico_iter, TB)
             LLbest = LL
+            if (rr == len(reg_vals)-1) and extended_loop:
+                reg_vals = np.concatenate( (reg_vals, [reg_vals[-1]*10]) )
+                LLsR = np.concatenate( (LLsR, [0]) ) # so loop continues, adding value
+                if verbose:
+                    print( '    Adding additional reg_val:', reg_vals[-1] )
         else:
             print( "  %s-%d: %9.6f"%(reg_type, rr, LL))
-    
-    if thresh < 1.0:
-        reg_select = model_selection( LLsR, thresh, verbose=verbose )
-    else:
-        reg_select = np.argmax(LLsR)
+        rr += 1
+
+    #if thresh < 1.0:
+    #    reg_select = model_selection( LLsR, thresh, verbose=verbose )
+    #else:
+    reg_select = np.argmax(LLsR)
+
     reg_val = reg_vals[reg_select]
     print( "Finished %s: selected reg"%reg_type, reg_val, "(%d)"%reg_select )
     model_select = Rmods[reg_select]
-    if export_all:
-        export_dict = {
-            'Rmods': deepcopy(Rmods), 'LLsR': deepcopy(LLsR), "reg_vals": reg_vals,
-            'LLcells': LLcells}
-        return deepcopy(model_select), reg_val, export_dict
-    else:
-        return deepcopy(model_select), reg_val
-    
-    
+    export_dict = {
+        'Rmods': deepcopy(Rmods), 'LLsR': deepcopy(LLsR), "reg_vals": reg_vals,
+        'LLcells': LLcells}
+    return deepcopy(model_select), reg_val, export_dict
+# END bmodel_regpath()    
+
+
 def sico_ffnetworks( 
         num_mfilters=None, num_clones=None, numBE=None, numBI=None, mask=True,  # must enter
         monoc_width=21, binoc_width=13, num_tkerns=8, NX=36, pos_constraint=False,  # default values
@@ -1308,7 +1403,10 @@ def spatiotemporal_std_display( filt2d, t_edge, x_edge, ax_handle, display_norm=
         (box2[0]-0.5,tlags[0]-0.5), x_edge, t_edge, linewidth=1, edgecolor='r', facecolor='none'))
 
 
-def smoothness_select( reg_info, t_edge=6, x_edge=6, display_n=0 ):
+def smoothness_select( reg_info, t_edge=6, x_edge=6, display_n=None ):
+    """
+    Selects best smoothness based on where transition occurs rather than maximizing LL 
+    """        
     num_regs = len(reg_info['LLsR'])
     stds = np.zeros(num_regs)
     ws = []
@@ -1320,17 +1418,33 @@ def smoothness_select( reg_info, t_edge=6, x_edge=6, display_n=0 ):
     Xreg = reg_info['reg_vals'][reg]
     
     # STATUS DISPLAY
-    utils.ss(1,5, rh=3)
-    ax = plt.subplot(1,5,1)
-    spatiotemporal_std_display( ws[0][..., display_n], t_edge, x_edge, ax )
-    plt.title('Lowest d2x-reg')
-    ax = plt.subplot(1,5,2)
-    spatiotemporal_std_display( ws[-1][..., display_n], t_edge, x_edge, ax )
-    plt.title('Highest d2x-reg')
-    ax = plt.subplot(1,5,3)
-    spatiotemporal_std_display( ws[reg][..., display_n], t_edge, x_edge, ax )
-    plt.title('Chosen d2x-reg')
-    plt.subplot(154)
+    if display_n is None:
+        NF = ws[0].shape[-1]
+        utils.ss(NF,5, rh=3)
+        for ii in range(NF):
+            ax = plt.subplot(NF,5,1+ii*5)
+            spatiotemporal_std_display( ws[0][..., display_n], t_edge, x_edge, ax )
+            plt.title('Lowest d2x-reg')
+            ax = plt.subplot(NF,5,2+ii*5)
+            spatiotemporal_std_display( ws[-1][..., display_n], t_edge, x_edge, ax )
+            plt.title('Highest d2x-reg')
+            ax = plt.subplot(NF,5,3+ii*5)
+            spatiotemporal_std_display( ws[reg][..., display_n], t_edge, x_edge, ax )
+            plt.title('Chosen d2x-reg')
+    else:
+        utils.ss(1,5, rh=3)
+        ax = plt.subplot(1,5,1)
+        spatiotemporal_std_display( ws[0][..., display_n], t_edge, x_edge, ax )
+        plt.title('Lowest d2x-reg')
+        ax = plt.subplot(1,5,2)
+        spatiotemporal_std_display( ws[-1][..., display_n], t_edge, x_edge, ax )
+        plt.title('Highest d2x-reg')
+        ax = plt.subplot(1,5,3)
+        spatiotemporal_std_display( ws[reg][..., display_n], t_edge, x_edge, ax )
+        plt.title('Chosen d2x-reg')
+        NF = 1
+
+    plt.subplot(NF,5,4)
     plt.plot(stds,'b')
     plt.plot(stds,'b.')
     plt.plot(reg,stds[reg],'go')
@@ -1338,7 +1452,7 @@ def smoothness_select( reg_info, t_edge=6, x_edge=6, display_n=0 ):
     plt.plot(xs, np.ones(2)*thresh,'r--')
     plt.title('Box stdevs')
 
-    plt.subplot(155)
+    plt.subplot(NF,5,5)
     plt.plot(reg_info['LLsR'],'b')
     plt.plot(reg_info['LLsR'],'b.')
     plt.plot(reg, reg_info['LLsR'][reg],'go')
