@@ -1167,7 +1167,7 @@ def bmodel_regpath(
             if average_pool == 1:
                 LL = np.mean(LLs)
             else:
-                num_skip = 1-int(np.round(len(LLs)*average_pool))
+                num_skip = int(np.round(len(LLs)*(1-average_pool)))
                 LL = np.mean(np.sort(LLs)[num_skip:])
                 
         Rmods.append(deepcopy(sico_iter))
