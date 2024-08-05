@@ -1088,7 +1088,7 @@ def convert2ST( mod0, temporal_basis=None, new_lags=16 ):
 
 def bmodel_regpath(
     model, train_ds, val_ds, reg_type=None, reg_vals=None, ffnet_target=0, layer_target=0, 
-    nullLL=None, couple_xt=True, hard_reset=False, extended_loop=True, average_pool=1,
+    nullLL=None, couple_xt=True, hard_reset=True, extended_loop=True, average_pool=1,
     verbose=True, device=None):
     """
     regularization-path for NDN model -- standard I think other than using specific details of the model
@@ -1124,7 +1124,7 @@ def bmodel_regpath(
     MAX_REGS = 16
 
     if reg_vals is None:
-        reg_vals = [1e-6, 0.0001, 0.001, 0.01, 0.1]
+        reg_vals = [1e-6, 0.0001, 0.001, 0.01, 0.1, 1]
     if device is None:
         device=torch.device('cuda:0')
 
@@ -1149,7 +1149,8 @@ def bmodel_regpath(
             sico_iter.networks[ffnet_target].layers[layer_target].reg.vals['d2t'] = reg_vals[rr]/2
             
         if hard_reset:
-            sico_iter.networks[1].layers[0].weight.data[:,:] = 0.0
+            #sico_iter.networks[1].layers[0].weight.data[:,:] = 0.0
+            sico_iter.networks[ffnet_target].layers[layer_target].weight.data[:,:] *= 0.9
             
         sico_iter = sico_iter.to(device)
         fit_lbfgs( sico_iter, train_ds[:], verbose=False)
@@ -1157,7 +1158,7 @@ def bmodel_regpath(
         if nullLL is None:
             LLs = sico_iter.eval_models(val_ds[:], null_adjusted=True)
         else:
-            LLs = nullLL-LLs
+            LLs = nullLL-sico_iter.eval_models(val_ds[:])
         sico_iter = sico_iter.to(torch.device('cpu'))
         LLcells.append(deepcopy(LLs))
 
@@ -1291,11 +1292,12 @@ def clone_path_prepare_data(ee, cc, TB, nlags=12, clone_model=None, num_clones=N
     old_nlags, num_tk = TB.shape
 
     # Make datasets
-    data_clone = binocular_single( expt_num=ee+1, datadir=datadir, time_embed=2, skip_lags=1, num_lags=old_nlags )
+    #data_clone = binocular_single( expt_num=ee+1, datadir=datadir, time_embed=2, skip_lags=1, num_lags=old_nlags )
+    data_clone = binocular_single( expt_num=ee, datadir=datadir, time_embed=2, skip_lags=1, num_lags=old_nlags )
     if nlags is not None:
-        data1 = binocular_single( expt_num=ee+1, datadir=datadir, time_embed=2, skip_lags=1, num_lags=nlags )
+        data1 = binocular_single( expt_num=ee, datadir=datadir, time_embed=2, skip_lags=1, num_lags=nlags )
     else:
-        data1 = binocular_single( expt_num=ee+1, datadir=datadir, time_embed=2, skip_lags=1, num_lags=old_nlags )
+        data1 = binocular_single( expt_num=ee, datadir=datadir, time_embed=2, skip_lags=1, num_lags=old_nlags )
         
     robs = deepcopy(data1.robs)
     dfs = deepcopy(data1.dfs)
@@ -1405,7 +1407,8 @@ def spatiotemporal_std_display( filt2d, t_edge, x_edge, ax_handle, display_norm=
 
 def smoothness_select( reg_info, t_edge=6, x_edge=6, display_n=None ):
     """
-    Selects best smoothness based on where transition occurs rather than maximizing LL 
+    Selects best smoothness based on where transition occurs rather than maximizing LL.
+    Will automaticall display unless display_n is set and < 0
     """        
     num_regs = len(reg_info['LLsR'])
     stds = np.zeros(num_regs)
@@ -1417,19 +1420,25 @@ def smoothness_select( reg_info, t_edge=6, x_edge=6, display_n=None ):
     reg = np.where(stds < thresh)[0][0]
     Xreg = reg_info['reg_vals'][reg]
     
+    # Cancel display by making display_n < 0
+    if display_n is not None:
+        if display_n < 0:
+            print('d2xt reg:', Xreg)
+            return deepcopy(reg_info['Rmods'][reg])
+
     # STATUS DISPLAY
     if display_n is None:
         NF = ws[0].shape[-1]
         utils.ss(NF,5, rh=3)
         for ii in range(NF):
             ax = plt.subplot(NF,5,1+ii*5)
-            spatiotemporal_std_display( ws[0][..., display_n], t_edge, x_edge, ax )
+            spatiotemporal_std_display( ws[0][..., ii], t_edge, x_edge, ax )
             plt.title('Lowest d2x-reg')
             ax = plt.subplot(NF,5,2+ii*5)
-            spatiotemporal_std_display( ws[-1][..., display_n], t_edge, x_edge, ax )
+            spatiotemporal_std_display( ws[-1][..., ii], t_edge, x_edge, ax )
             plt.title('Highest d2x-reg')
             ax = plt.subplot(NF,5,3+ii*5)
-            spatiotemporal_std_display( ws[reg][..., display_n], t_edge, x_edge, ax )
+            spatiotemporal_std_display( ws[reg][..., ii], t_edge, x_edge, ax )
             plt.title('Chosen d2x-reg')
     else:
         utils.ss(1,5, rh=3)
@@ -1461,6 +1470,206 @@ def smoothness_select( reg_info, t_edge=6, x_edge=6, display_n=None ):
     plt.show()
     print('d2xt reg:', Xreg)
     return deepcopy(reg_info['Rmods'][reg])
+
+
+def mask_filter_noise( k, area_fraction=0.4, thresh=None, verbose=False ):
+    """
+    Generates mask over 2-d filter that includes all points greater than 0.1 of the filter max
+    Returns the standard dev of the filter outside of the mask, and possibly the mask too
+    """
+    from skimage import measure
+    from ColorDataUtils.RFutils import get_mask_from_contour  
+
+    kabs = np.pad( abs(k)/np.max(abs(k)), 1) # Padding to get rid of edge effects with contours
+    A = np.prod(k.shape[:2])
+
+    if thresh is None:
+        PREC = 0.05
+        MAX_ITER = 10
+        # Search for threshold to achieve area_fraction not occupied by mask
+        mfrac, niter = 0, 0
+        thresh, inc = 1, 0.5
+        while ((mfrac < area_fraction-PREC) | (mfrac > area_fraction)) & (niter < MAX_ITER):
+            if mfrac < area_fraction:
+                thresh += -inc
+            else:
+                thresh += inc
+
+            contours = measure.find_contours(kabs, thresh)
+            kmask = np.zeros(kabs.shape[:2])
+            for contour in contours:
+                #plt.plot(contour[:, 0], contour[:, 1], linewidth=2)
+                kmask += get_mask_from_contour(kabs, contour)
+            #plt.show()
+            #kmask[kmask > 1] = 1.0
+            kmask = kmask[1:-1,:][:,1:-1]  # trim kmask now that padding is done
+            mfrac = np.sum(kmask > 0)/A
+            niter += 1
+            inc *= 0.5
+            if verbose:
+                print( "  Iter %2d: thresh %0.4f area: %0.3f"%(niter, thresh, mfrac))
+    else:
+        contours = measure.find_contours(kabs, thresh)
+        kmask = np.zeros(kabs.shape[:2])
+        for contour in contours:
+            #plt.plot(contour[:, 0], contour[:, 1], linewidth=2)
+            kmask += get_mask_from_contour(kabs, contour)
+        #plt.show()
+        kmask = kmask[1:-1,:][:,1:-1]  # trim kmask now that padding is done
+    kmask[kmask > 1] = 1.0
+    
+    #utils.imagesc(kmask)
+    #plt.show()
+    return kmask
+
+
+def smoothness_select_contour( reg_info, thresh=0.5, to_plot=True ):
+    """
+    Selects best smoothness based on where transition occurs rather than maximizing LL 
+    threshold now corresponds to area-fraction as applied by mask
+    """     
+    num_regs = len(reg_info['LLsR'])
+    stds = np.zeros(num_regs)
+
+    # First, determin masks on most-smoothed filter
+    ws = []
+    for ii in range(num_regs):
+        ws.append( reg_info['Rmods'][ii].get_weights() )
+    NF = ws[0].shape[-1]
+    kmasks = []
+    for jj in range(NF):
+        kmasks.append( mask_filter_noise(ws[-1][..., jj], area_fraction=thresh) )
+
+    for ii in range(num_regs):
+        for jj in range(NF): 
+            k = ws[ii][..., jj]
+            stds[ii] += np.std( k[kmasks[jj] == 0] )
+    stds *= 1/NF
+    #print(stds, (max(stds)+min(stds))/2 )
+    selection_thresh = (max(stds)+min(stds))/2
+    #reg_min = np.where(stds > selection_thresh)[0][-1]   # wants before smoothness gets crazy
+    reg_min = np.where(stds < selection_thresh)[0][0] # wants after smoothness transition
+    # This (above) is the minimum reg -- now pick best LL better than this:
+    reg = np.argmax(reg_info['LLsR'][reg_min:]) + reg_min
+
+    Xreg = reg_info['reg_vals'][reg]
+
+    if to_plot:
+        utils.ss(NF, 6, rh=2.8)
+        for ii in range(NF):
+            plt.subplot(NF,6,ii*6+1)
+            utils.imagesc(kmasks[ii])
+            plt.subplot(NF,6,ii*6+2)
+            utils.imagesc(ws[0][..., ii])
+            plt.title('Lowest d2x-reg')
+            plt.subplot(NF,6,ii*6+3)
+            utils.imagesc(ws[-1][..., ii]) 
+            plt.title('Highest d2x-reg')
+            plt.subplot(NF,6,ii*6+4)
+            utils.imagesc(ws[reg][..., ii])
+            plt.title('Chosen d2x-reg')
+
+        plt.subplot(NF,6,5)
+        plt.plot(stds,'b')
+        plt.plot(stds,'b.')
+        plt.plot(reg,stds[reg],'go')
+        xs = plt.xlim()
+        plt.plot(xs, np.ones(2)*selection_thresh,'r--')
+        plt.xlim(xs)
+        plt.title('Box stdevs')
+
+        plt.subplot(NF,6,6)
+        plt.plot(reg_info['LLsR'],'b')
+        plt.plot(reg_info['LLsR'],'b.')
+        plt.plot(reg, reg_info['LLsR'][reg],'go')
+        plt.title('LLs')
+        ys = plt.ylim()
+        plt.plot(np.ones(2)*reg_min, ys, 'c--')
+        plt.ylim(ys)
+        plt.show()
+    print('d2xt reg:', Xreg)
+    return deepcopy(reg_info['Rmods'][reg])
+
+
+def smoothness_select_contour2( reg_info, thresh=0.5, to_plot=True ):
+    """
+    Selects best smoothness based on where transition occurs rather than maximizing LL 
+    threshold now corresponds to area-fraction as applied by mask
+    """     
+    num_regs = len(reg_info['LLsR'])
+    stds = np.zeros(num_regs)
+
+    # First, determin masks on most-smoothed filter
+    ws = []
+    NF = reg_info['Rmods'][0].networks[0].layers[0].num_filters
+    area_frac = np.zeros([num_regs, NF])
+    for ii in range(num_regs):
+        ws.append( reg_info['Rmods'][ii].get_weights() )
+        for jj in range(NF):
+            m = mask_filter_noise(ws[ii][..., jj], thresh=0.2)
+            area_frac[ii,jj] = np.sum(m)/np.prod(m.shape)
+            
+    #print(area_frac)
+    area_frac = np.min(area_frac, axis=1)
+    print(area_frac, np.sum(area_frac < 0.5))
+    num_regs= np.sum(area_frac < 0.5)
+    NF = ws[0].shape[-1]
+    kmasks = []
+    for jj in range(NF):
+        kmasks.append( mask_filter_noise(ws[-1][..., jj], area_fraction=thresh) )
+
+    for ii in range(num_regs):
+        for jj in range(NF): 
+            k = ws[ii][..., jj]
+            stds[ii] += np.std( k[kmasks[jj] == 0] )
+    stds *= 1/NF
+    #print(stds, (max(stds)+min(stds))/2 )
+    #print(stds)
+    selection_thresh = (np.max(stds)+np.min(stds))/2
+    print(selection_thresh)
+    reg_min = np.where(stds > selection_thresh)[0][-1]   # wants highest LL after smoothness starts to trans
+    #reg_min = np.where(stds < selection_thresh)[0][0] # wants after smoothness transition
+    # This (above) is the minimum reg -- now pick best LL better than this:
+    reg = np.argmax(reg_info['LLsR'][reg_min:]) + reg_min
+
+    Xreg = reg_info['reg_vals'][reg]
+
+    if to_plot:
+        utils.ss(NF, 6, rh=2.8)
+        for ii in range(NF):
+            plt.subplot(NF,6,ii*6+1)
+            utils.imagesc(kmasks[ii])
+            plt.subplot(NF,6,ii*6+2)
+            utils.imagesc(ws[0][..., ii])
+            plt.title('Lowest d2x-reg')
+            plt.subplot(NF,6,ii*6+3)
+            utils.imagesc(ws[-1][..., ii]) 
+            plt.title('Highest d2x-reg')
+            plt.subplot(NF,6,ii*6+4)
+            utils.imagesc(ws[reg][..., ii])
+            plt.title('Chosen d2x-reg')
+
+        plt.subplot(NF,6,5)
+        plt.plot(stds,'b')
+        plt.plot(stds,'b.')
+        plt.plot(reg,stds[reg],'go')
+        xs = plt.xlim()
+        plt.plot(xs, np.ones(2)*selection_thresh,'r--')
+        plt.xlim(xs)
+        plt.title('Box stdevs')
+
+        plt.subplot(NF,6,6)
+        plt.plot(reg_info['LLsR'],'b')
+        plt.plot(reg_info['LLsR'],'b.')
+        plt.plot(reg, reg_info['LLsR'][reg],'go')
+        plt.title('LLs')
+        ys = plt.ylim()
+        plt.plot(np.ones(2)*reg_min, ys, 'c--')
+        plt.ylim(ys)
+        plt.show()
+    print('d2xt reg:', Xreg)
+    return deepcopy(reg_info['Rmods'][reg])
+# smoothness_select_contour2()
 
 
 def binocular_filter_shift( sico0, verbose=True ):
