@@ -25,16 +25,16 @@ class HNdataset(SensoryBase):
         """
         # call parent constructor
         super().__init__(filename, **kwargs)
-        print(self.datadir, filename)
+        print(self.datadir + filename)
         matdat = sio.loadmat(self.datadir+filename)
         print('Loaded ' + filename)
         #matdat = sio.loadmat('Data/'+exptname+'py.mat')
-        self.disp_list = matdat['disp_list'][:,0]
+        self.disp_list = matdat['disp_list'].squeeze()
         self.stimlist = np.unique(matdat['stimL'])
         self.Nstim = len(self.stimlist)
 
-        self.TRcued = matdat['cued'][:,0] # Ntr 
-        self.TRchoice = matdat['choice'][:,0] # Ntr 
+        self.TRcued = matdat['cued'].squeeze() # Ntr 
+        self.TRchoice = matdat['choice'].squeeze() # Ntr 
         self.TRsignal = matdat['signal']  # Ntr x 2 (sorted by RF)
         self.TRstrength = matdat['strength']  # Ntr x 2 (sorted by RF)
         #self.TRstim = matdat['cued_stim']  # Ntr x 4 (sorted by cued, then uncued)
@@ -149,7 +149,7 @@ class HNdataset(SensoryBase):
         #    f_far[nn,1] = np.sum(TRchoice[tr2] > 0)/len(tr2)
 
         # Prepare stimulus using input argument 'which_stim'
-        self.prepare_stim( which_stim=which_stim, skip_lags=skip_lags )
+        self.assemble_stim( which_stim=which_stim, skip_lags=skip_lags )
 
         # Make drift-design matrix using anchor points at each cycle
         cued_transitions = np.where(abs(np.diff(self.TRcued)) > 0)[0]
@@ -157,7 +157,7 @@ class HNdataset(SensoryBase):
         self.construct_drift_design_matrix(block_anchors = anchors) 
     # END HNdata.__init__()
 
-    def prepare_stim( self, which_stim='left', skip_lags=None, num_lags=None ):
+    def assemble_stim( self, which_stim='left', skip_lags=None, num_lags=None ):
         """
         Prepares stimulus for dataset.
 
@@ -198,6 +198,7 @@ class HNdataset(SensoryBase):
             num_lags = self.num_lags
 
         self.stim = self.time_embedding( stim=stim, nlags=num_lags )
+        self.stim_dims[3] = num_lags
         # This will return a torch-tensor
     # END HNdata.prepare_stim()
 
