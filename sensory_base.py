@@ -300,18 +300,19 @@ class SensoryBase(Dataset):
             ccs = self.cells_out
         else:
             ccs = np.arange(self.NC)
-        if R.shape[1] == len(ccs):
-            dfs = self.dfs[:, ccs].detach().numpy()
-        else:
-            if verbose:
-                print('  Ignoring dfs.')
-            dfs = np.ones([self.dfs.shape[0], R.shape[1]])
 
         if R is None:  #then use [internal] Robs
             R = deepcopy( self.robs[:, ccs].detach().numpy() )  
         if len(R.shape) == 1:
             R = R[:, None]         
         num_psths = R.shape[1]  # otherwise use existing input
+
+        if R.shape[1] == len(ccs):
+            dfs = self.dfs[:, ccs].detach().numpy()
+        else:
+            if verbose:
+                print('  Ignoring dfs.')
+            dfs = np.ones([self.dfs.shape[0], R.shape[1]])
 
         # Compute median trial size
         if trial_size is None:
