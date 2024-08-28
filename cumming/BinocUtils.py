@@ -1088,7 +1088,7 @@ def convert2ST( mod0, temporal_basis=None, new_lags=16 ):
 
 def bmodel_regpath(
     model, train_ds, val_ds, reg_type=None, reg_vals=None, ffnet_target=0, layer_target=0, 
-    nullLL=None, couple_xt=True, hard_reset=True, extended_loop=True, average_pool=1,
+    nullLL=None, couple_xt=0.5, hard_reset=True, extended_loop=True, average_pool=1,
     verbose=True, device=None):
     """
     regularization-path for NDN model -- standard I think other than using specific details of the model
@@ -1145,8 +1145,8 @@ def bmodel_regpath(
         sico_iter = deepcopy(model)
         sico_iter.networks[ffnet_target].layers[layer_target].reg.vals[reg_type] = reg_vals[rr]
         
-        if (reg_type == 'd2x') and couple_xt:  # then couple d2t
-            sico_iter.networks[ffnet_target].layers[layer_target].reg.vals['d2t'] = reg_vals[rr]/2
+        if (reg_type == 'd2x') and (couple_xt > 0):  # then couple d2t
+            sico_iter.networks[ffnet_target].layers[layer_target].reg.vals['d2t'] = reg_vals[rr]*couple_xt
             
         if hard_reset:
             #sico_iter.networks[1].layers[0].weight.data[:,:] = 0.0
@@ -1405,7 +1405,7 @@ def spatiotemporal_std_display( filt2d, t_edge, x_edge, ax_handle, display_norm=
         (box2[0]-0.5,tlags[0]-0.5), x_edge, t_edge, linewidth=1, edgecolor='r', facecolor='none'))
 
 
-def smoothness_select( reg_info, t_edge=6, x_edge=6, display_n=None ):
+def smoothness_select( reg_info, t_edge=6, x_edge=6, display_n=None, tbasis=None ):
     """
     Selects best smoothness based on where transition occurs rather than maximizing LL.
     Will automaticall display unless display_n is set and < 0
@@ -1414,7 +1414,10 @@ def smoothness_select( reg_info, t_edge=6, x_edge=6, display_n=None ):
     stds = np.zeros(num_regs)
     ws = []
     for ii in range(num_regs):
-        ws.append(reg_info['Rmods'][ii].get_weights())
+        if tbasis is None:
+            ws.append(reg_info['Rmods'][ii].get_weights())
+        else:
+            ws.append(compute_mfilters(reg_info['Rmods'][ii], tbasis))
         stds[ii] = spatiotemporal_box_std(ws[ii], t_edge, x_edge, to_plot=False ) 
     thresh = np.mean([max(stds),min(stds)]) 
     reg = np.where(stds < thresh)[0][0]
@@ -1523,7 +1526,7 @@ def mask_filter_noise( k, area_fraction=0.4, thresh=None, verbose=False ):
     return kmask
 
 
-def smoothness_select_contour( reg_info, thresh=0.5, to_plot=True ):
+def smoothness_select_contour( reg_info, thresh=0.5, to_plot=True, tbasis=None ):
     """
     Selects best smoothness based on where transition occurs rather than maximizing LL 
     threshold now corresponds to area-fraction as applied by mask
@@ -1534,7 +1537,11 @@ def smoothness_select_contour( reg_info, thresh=0.5, to_plot=True ):
     # First, determin masks on most-smoothed filter
     ws = []
     for ii in range(num_regs):
-        ws.append( reg_info['Rmods'][ii].get_weights() )
+        if tbasis is None:
+            ws.append(reg_info['Rmods'][ii].get_weights())
+        else:
+            ws.append(compute_mfilters(reg_info['Rmods'][ii], tbasis))
+
     NF = ws[0].shape[-1]
     kmasks = []
     for jj in range(NF):

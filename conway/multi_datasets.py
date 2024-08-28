@@ -272,10 +272,25 @@ class MultiClouds(SensoryBase):
         fix_size = np.array(f['fix_size'], dtype=np.int64).squeeze()
         stim_scale = np.array(f['stimscale'], dtype=np.int64).squeeze()
         stim_locsLP = np.array(f['stim_location'], dtype=np.int64),
+
         if len(stim_locsLP) == 1: # then list of arrays for some reason
             print('  FILE_INFO: stim_locsLP list again -- ok but output check')
             stim_locsLP = stim_locsLP[0]
         stim_locsET = np.array(f['ETstim_location'], dtype=np.int64)
+
+        if 'stim_location_deltas' in f:
+            stim_location_deltas = np.array(f['stim_location_deltas'], dtype=np.int64)
+        else:
+            stim_location_deltas = None
+        if 'cloud_binary' in f:
+            cloud_binary = np.array(f['cloud_binary'], dtype=np.int64)
+            # 0 = normal clouds, 1 = binary clouds, 2 = contrast-matched clouds
+            #cloud_area = np.array(f['cloud_area'], dtype=np.int64)
+            cloud_scale = np.array(f['cloud_scale'], dtype=np.int64)
+            cloud_info = np.concatenate( (cloud_binary, cloud_scale), axis=1 )
+        else:
+            clound_info = None
+
         blockIDs = np.array(f['blockID'], dtype=np.int64).squeeze()  # what is this?
         #self.ETtrace = np.array(f['ETtrace'], dtype=np.float32)
         #self.ETtraceHR = np.array(f['ETtrace_raw'], dtype=np.float32)
@@ -337,7 +352,9 @@ class MultiClouds(SensoryBase):
             'fix_size': fix_size,
             'stim_scale': stim_scale,
             'stim_locsLP': stim_locsLP,
-            'stim_locsET': stim_locsET}
+            'stim_locsET': stim_locsET,
+            'stim_location_deltas': stim_location_deltas,
+            'cloud_info': cloud_info}
     # END MultiClouds.read_file_info()  
 
     def modify_included_cells(self, clists, expt_n=None):
@@ -601,6 +618,9 @@ class MultiClouds(SensoryBase):
             assert not self.luminance_only, "Cannot convert color spaces if luminance-only."
         self.LMS = LMS
 
+        locsET = self.file_info[expt_n]['stim_locsET']
+        locsLP = self.file_info[expt_n]['stim_locsLP']
+        
         if which_stim is not None:
             assert L is None, "CONSTRUCT_STIMULUS: cannot specify L if using which_stim (i.e. prepackaged stim)"
             if not isinstance(which_stim, int):
@@ -609,12 +629,14 @@ class MultiClouds(SensoryBase):
                 else:
                     which_stim=1
             if which_stim == 0:
-                print( "Stim #%d: using ET stimulus", expt_n )
+                print( "Stim #%d: using ET stimulus"%expt_n )
                 stim_tmp = np.array(self.fhandles[expt_n]['stimET'], dtype=np.int8)
                 #self.stim_pos = self.stim_locationET[:,0]
+                stim_pos = locsET[:,0]  # take first one -- should use other approach if many
             else:
-                print( "Stim #%d: using laminar probe stimulus", expt_n )
+                print( "Stim #%d: using laminar probe stimulus"%expt_n )
                 stim_tmp = np.array(self.fhandles[expt_n]['stim'], dtype=np.int8)
+                stim_pos = locsLP[:,0]  # take first one -- should use other approach if many
                 #self.stim_pos = self.stim_location[:, 0]
 
             if self.luminance_only:
