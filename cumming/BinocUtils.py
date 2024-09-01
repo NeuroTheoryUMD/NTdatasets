@@ -1103,7 +1103,7 @@ def bmodel_regpath(
         layer_target: which layer to regularize (default 0)
         nullLL: give LL-null of model so that can correctly compute LLs relative to null model. Default is
             None, where it will use the embedded null_adjusted=True of eval_models
-        couple_xt: whether to make d2t=d2x/2 coupled to 'd2x' when its the reg_type (default: True)
+        couple_xt: whether to make d2t=d2x/2 coupled to 'd2x' when its the reg_type (default: 0.5)
         extended_loop: whether to continue with reg_vals of factors of 10 if best value is last (default: True)
         hard_reset: when set to 'True': will zero out drift model to force model to fit longer (default: False)
         average_pool: if population model, which fraction of LLs to average over to determine 
@@ -1353,7 +1353,10 @@ def clone_path_prepare_data(ee, cc, TB, nlags=12, clone_model=None, num_clones=N
             data_clone.stim_dims[-1] = nlags
 
             base_model = convert2ST( base_model, TB, nlags )  # note this will not be normalized correctly
-
+        else:
+            data1.stim = data_clone.stim.clone()
+            data1.stim_dims[-1] = data_clone.stim_dims[-1]
+            
         clone_path_info['base_model'] = base_model 
         clone_path_info['LLs'] = LLs0
     
@@ -1404,6 +1407,70 @@ def spatiotemporal_std_display( filt2d, t_edge, x_edge, ax_handle, display_norm=
     ax_handle.add_patch(patches.Rectangle(
         (box2[0]-0.5,tlags[0]-0.5), x_edge, t_edge, linewidth=1, edgecolor='r', facecolor='none'))
 
+
+def smoothness_select0( reg_info, LLthresh=None, to_plot=True, tbasis=None ):
+    """
+    Selects best smoothness based on where transition occurs rather than maximizing LL.
+    Will automaticall display unless display_n is set and < 0
+    """        
+    LLs = reg_info['LLsR']
+    num_regs = len(LLs)
+    LLpos = np.argmax(LLs)
+    if LLthresh is None:
+        LLthresh = np.max(LLs)*0.90
+        print( "  No LLthresh set: using 90\% of max: ", LLthresh )
+    a = np.where(LLs[LLpos:] > LLthresh)[0]
+    #print(' check', LLs, LLpos)
+    if len(a) == 0:
+        print('Warning: did not achieve LLthresh90 in regpath')
+        print( "  LLthresh %0.4f > %0.4f"%(LLthresh, np.max(LLs)) )
+        a = [0]
+    #print(a, np.max(a), a[-1])
+    #print(np.where(LLs[LLpos:] > LLthresh*np.max(LLs))[0])
+    #print(np.where(LLs[LLpos] > LLthresh*np.max(LLs))[0][-1])
+    #print(LLpos, np.max( np.where(LLs[LLpos] > LLthresh*np.max(LLs))[0] ), LLthresh*np.max(LLs))
+    reg = LLpos + a[-1]
+    Xreg = reg_info['reg_vals'][reg]
+
+    if to_plot:
+        #print( "Threshold: %0.4f"%LLthresh)
+        ws = []
+        for ii in range(num_regs):
+            if tbasis is None:
+                ws.append(reg_info['Rmods'][ii].get_weights())
+            else:
+                ws.append(compute_mfilters(reg_info['Rmods'][ii], tbasis))
+        NF = ws[0].shape[-1]
+
+        utils.ss(NF, 4, rh=2.8)
+        for ii in range(NF):
+            #plt.subplot(NF,6,ii*6+1)
+            #utils.imagesc(kmasks[ii])
+            plt.subplot(NF,4,ii*4+1)
+            utils.imagesc(ws[0][..., ii])
+            plt.title('Lowest d2x-reg')
+            plt.subplot(NF,4,ii*4+2)
+            utils.imagesc(ws[-1][..., ii]) 
+            plt.title('Highest d2x-reg')
+            plt.subplot(NF,4,ii*4+3)
+            utils.imagesc(ws[reg][..., ii])
+            plt.title('Chosen d2x-reg')
+
+        plt.subplot(NF,4,4)
+        plt.plot(reg_info['LLsR'],'b')
+        plt.plot(reg_info['LLsR'],'b.')
+        plt.plot(reg, reg_info['LLsR'][reg],'go')
+        plt.title('LLs')
+        ys = plt.ylim()
+        xs = plt.xlim()
+        plt.plot(np.ones(2)*reg, ys, 'c--')
+        plt.plot(xs, np.ones(2)*LLthresh,'r--' )
+        plt.ylim(ys)
+        plt.xlim(xs)
+        plt.show()
+    print('d2xt reg:', Xreg)
+    return deepcopy(reg_info['Rmods'][reg])
+# END smoothness_select0
 
 def smoothness_select( reg_info, t_edge=6, x_edge=6, display_n=None, tbasis=None ):
     """
@@ -1623,7 +1690,8 @@ def smoothness_select_contour2( reg_info, thresh=0.5, to_plot=True ):
     NF = ws[0].shape[-1]
     kmasks = []
     for jj in range(NF):
-        kmasks.append( mask_filter_noise(ws[-1][..., jj], area_fraction=thresh) )
+        #kmasks.append( mask_filter_noise(ws[-1][..., jj], area_fraction=thresh) )
+        kmasks.append( mask_filter_noise(ws[num_regs-1][..., jj], area_fraction=thresh) )
 
     for ii in range(num_regs):
         for jj in range(NF): 
@@ -1632,10 +1700,13 @@ def smoothness_select_contour2( reg_info, thresh=0.5, to_plot=True ):
     stds *= 1/NF
     #print(stds, (max(stds)+min(stds))/2 )
     #print(stds)
-    selection_thresh = (np.max(stds)+np.min(stds))/2
-    print(selection_thresh)
-    reg_min = np.where(stds > selection_thresh)[0][-1]   # wants highest LL after smoothness starts to trans
-    #reg_min = np.where(stds < selection_thresh)[0][0] # wants after smoothness transition
+    #selection_thresh = 0.25*np.max(stds)+ 0.75*np.min(stds)
+    selection_thresh = 0.5*np.max(stds)+ 0.5*np.min(stds)
+    # Pick best LL after regularization is at least 50% there
+    reg_min = np.where(stds < selection_thresh)[0][0] # wants after smoothness transition
+    # ORIGINAL
+    #reg_min = np.where(stds > selection_thresh)[0][-1]   # wants highest LL after smoothness starts to trans
+
     # This (above) is the minimum reg -- now pick best LL better than this:
     reg = np.argmax(reg_info['LLsR'][reg_min:]) + reg_min
 
