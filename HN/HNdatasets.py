@@ -69,7 +69,15 @@ class HNdataset(SensoryBase):
         for bb in range(self.Ntr):
             self.block_inds.append( np.arange(blks[bb,0]-1, blks[bb,1], dtype=np.int64) )
             # Take out the first num_lags part of each data-filter
-            self.dfs[np.arange(blks[bb,0]-1, blks[bb,0]+np.maximum(20,self.num_lags+1)), :] = 0.0
+            self.dfs[np.arange(blks[bb,0]-1, blks[bb,0]+np.maximum(10,self.num_lags+1)), :] = 0.0
+
+        # for some reason there is stuff at the end that is not associated with trial -- cut!
+        self.NT = self.block_inds[-1][-1]+1
+        self.robs = self.robs[:self.NT, :]
+        self.dfs = self.dfs[:self.NT, :]
+        self.stimL = self.stimL[:self.NT, :]
+        self.stimR = self.stimR[:self.NT, :]
+        self.Xsacc = self.Xsacc[:self.NT, :]
 
         self.CHnames = [None]*self.NC
         for cc in range(self.NC):
@@ -200,7 +208,7 @@ class HNdataset(SensoryBase):
         self.stim = self.time_embedding( stim=stim, nlags=num_lags )
         self.stim_dims[3] = num_lags
         # This will return a torch-tensor
-    # END HNdata.prepare_stim()
+    # END HNdata.assemble_stim()
 
     def construct_Xadapt( self, tent_spacing=12, cueduncued=False ):
         """
