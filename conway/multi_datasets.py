@@ -129,53 +129,104 @@ class MultiClouds(SensoryBase):
 
         self.fhandles = [h5py.File(os.path.join(datadir, sess + '.mat'), 'r') for sess in self.filenames]
         self.file_info = [None] * self.Nexpts
-        self.fileNT = np.zeros(self.Nexpts, dtype=np.int64)
-        self.fileNBLK = np.zeros(self.Nexpts, dtype=np.int64)
-        self.fileNC = np.zeros(self.Nexpts, dtype=np.int64)
-        self.fileNA = np.zeros(self.Nexpts, dtype=np.int64) # for the drift term
-        self.file_tstart = np.zeros(self.Nexpts, dtype=np.int64)
-        self.file_blkstart = np.zeros(self.Nexpts, dtype=np.int64)
+        self.exptNT = np.zeros(self.Nexpts, dtype=np.int64)  # used to be fileNT
+        self.exptNBLK = np.zeros(self.Nexpts, dtype=np.int64) # used to be fileNBLK
+        self.exptNC = np.zeros(self.Nexpts, dtype=np.int64) # used to be 
+        self.exptNA = np.zeros(self.Nexpts, dtype=np.int64) # for the drift term -- used to be fileNA
+        self.expt_tstart = np.zeros(self.Nexpts, dtype=np.int64) # used to be file_tstart
+        self.expt_blkstart = np.zeros(self.Nexpts, dtype=np.int64) # used to be file_blkstart
 
-        tcount, blkcount = 0, 0
+        # The following are specific to the cells and tranges selected for the particular instance of the dataset
+        # the file_info has the full information about experimental data (from the files themselves)
         self.tranges = [None] * self.Nexpts
         self.cranges = [None] * self.Nexpts
         self.block_inds = []
+        tcount, blkcount = 0, 0
 
-        # Structure of file on time/trial level
- 
-        for ff in range(self.Nexpts):
-            # get hdf5 file handles
-            self.file_info[ff] = self.read_file_info(ff, filenames[ff])
-            if self.include_MUs:
-                self.fileNC[ff] = self.file_info[ff]['NSUs'] + self.file_info[ff]['NMUs']
+        # Structure of file on time/trial level 
+        for ee in range(self.Nexpts):
+            # This is a catalog of what is in the files themselves (without filtering for this data)
+            self.file_info[ee] = self.read_file_info(ee, filenames[ee])
+
+            # Set initial crange (all cells in absence of clists) 
+            if cell_lists is None:
+                self.cranges[ee] = np.arange(self.file_info[ee]['NC'], dtype=np.int64)
+            elif len(cell_lists[ee]) > 0:
+                if isinstance( cell_lists[ee], list):
+                    cell_lists[ee] = np.array(cell_lists[ee], dtype=np.int64)
+                self.cranges[ee] = deepcopy(cell_lists[ee]).astype(np.int64)
+            self.exptNC[ee] = len(self.cranges[ee])
+
+            # Parse timing and block information given eye_config
+            if self.eye_config == 0:
+                self.tranges[ee] = np.arange(self.file_info[ee]['NT'])
             else:
-                self.fileNC[ff] = self.file_info[ff]['NSUs']
+                self.tranges[ee] = np.where(self.file_info[ee]['LRpresent'] == self.eye_config)[0]
+                # Check for contiguous option (throw away disjoint eye config)
+                if self.eye_contiguous & (self.eye_config > 0):
+                    tbreaks = np.where(np.diff(self.tranges[ee]) > 1)[0]
+                    if len(tbreaks) > 0:
+                        print("  Disjoint data exists with this eye_config -- trunctating to first section.")
+                        self.tranges[ee] = self.tranges[ee][range(tbreaks[0]+1)]
+
+            #if self.include_MUs:
+            #    self.fileNC[ff] = self.file_info[ff]['NSUs'] + self.file_info[ff]['NMUs']
+            #else:
+            #    self.fileNC[ff] = self.file_info[ff]['NSUs']
 
             # Consolidate valid t-ranges based on binocular choice
-            self.tranges[ff] = self.file_info[ff]['tmap']
-            self.cranges[ff] = np.arange(self.fileNC[ff], dtype=np.int64)
-            # Make one long block-list
-            NBLK = self.file_info[ff]['trial_info'].shape[0]
-            for bb in range(NBLK):
-                self.block_inds.append( 
-                    tcount + np.arange(self.file_info[ff]['trial_info'][bb, 0], self.file_info[ff]['trial_info'][bb, 1]) )
-            self.fileNBLK[ff] = self.file_info[ff]['trial_info'].shape[0]
-            self.file_blkstart[ff] = blkcount
-            blkcount += NBLK
 
-            self.fileNT[ff] = self.file_info[ff]['NT']
-            self.file_tstart[ff] = tcount
-            tcount += self.file_info[ff]['NT']
+            # Make one long block-list -- this is now down in assemble_robs()
+            #NBLK = self.file_info[ff]['trial_info'].shape[0]
+            #for bb in range(NBLK):
+            #    self.block_inds.append( 
+            #        tcount + np.arange(self.file_info[ff]['trial_info'][bb, 0], self.file_info[ff]['trial_info'][bb, 1]) )
+            #self.fileNBLK[ff] = self.file_info[ff]['trial_info'].shape[0]
+            #self.file_blkstart[ff] = blkcount
+            #blkcount += NBLK
+
+            self.exptNT[ee] = len(self.tranges[ee])
+            self.expt_tstart[ee] = tcount
+            tcount += self.exptNT[ee]
 
         # Assemble robs and dfs given current information
         self.NT = tcount
-        self.NC = np.sum(self.fileNC)
-        print( "%d total time steps, %d units"%(self.NT, self.NC) )
+        self.NC = np.sum(self.exptNC)
+
+        # Prune cranges and assemble robs (and blocks etc)
         if cell_lists is not None:
             self.modify_included_cells(cell_lists)
             # this will automatically assemble_robs at the end
         else:
             self.assemble_robs()
+
+        # MAKE DRIFT TERM BASED ON tranges determined by eye_config and nothing else
+        if self.drift_interval is None:
+            self.Xdrift = None
+        else:
+            Xdrift_expts = []
+            Nanchors_tot = 0
+            for ff in range(self.Nexpts):
+                # Want to go across the whole experiment relevant given the eye configuration
+                Nanchors = np.ceil(self.exptNBLK[ff]/self.drift_interval).astype(int)
+                anchors = np.zeros(Nanchors, dtype=np.int64)
+                for bb in range(Nanchors):
+                    anchors[bb] = self.block_inds[self.drift_interval*bb][0]
+                #self.Xdrift = utils.design_matrix_drift( self.NT, anchors, zero_left=False, const_right=True)
+                Xdrift_expts.append(self.design_matrix_drift( self.exptNT[ff], anchors, zero_left=False, const_right=True))
+                self.exptNA[ff] = Nanchors # store the number of anchors for each file
+                Nanchors_tot += Nanchors
+
+            # Assemble whole drift matrix
+            self.Xdrift = np.zeros( [self.NT, Nanchors_tot], dtype=np.float32 )
+            anchor_count = 0
+            for ff in range(self.Nexpts):
+                tslice = np.zeros( [self.exptNT[ff], Nanchors_tot], dtype=np.float32 )
+                tslice[:, anchor_count+np.arange(Xdrift_expts[ff].shape[1])] = Xdrift_expts[ff]
+                self.Xdrift[self.expt_tstart[ff]+np.arange(self.exptNT[ff]), :] = deepcopy(tslice)
+                anchor_count += Xdrift_expts[ff].shape[1]
+
+        print( "  MULTIDATASET %d expts: %d total time steps, %d units"%(self.Nexpts, self.NT, self.NC) )
  
         # Assemble current list of fixations
         self.sacc_inds = [None]*self.Nexpts
@@ -198,40 +249,14 @@ class MultiClouds(SensoryBase):
         #if to_assemble:
         #    self.assemble_saccade_inds()
 
-        ### Construct drift term if relevant
-        if self.drift_interval is None:
-            self.Xdrift = None
-        else:
-            Nanchors_tot = 0
-            # Make drift for each dataset
-            Xdrift_expts = []
-            for ff in range(self.Nexpts):
-                NBL = self.fileNBLK[ff]
-                Nanchors = np.ceil(NBL/self.drift_interval).astype(int)
-                anchors = np.zeros(Nanchors, dtype=np.int64)
-                for bb in range(Nanchors):
-                    anchors[bb] = self.block_inds[self.drift_interval*bb][0]
-                #self.Xdrift = utils.design_matrix_drift( self.NT, anchors, zero_left=False, const_right=True)
-                Xdrift_expts.append(self.design_matrix_drift( self.fileNT[ff], anchors, zero_left=False, const_right=True))
-                self.fileNA[ff] = Nanchors # store the number of anchors for each file
-                Nanchors_tot += Nanchors
-
-            # Assemble whole drift matrix
-            self.Xdrift = np.zeros( [self.NT, Nanchors_tot], dtype=np.float32 )
-            anchor_count = 0
-            for ff in range(self.Nexpts):
-                tslice = np.zeros( [self.fileNT[ff], Nanchors_tot], dtype=np.float32 )
-                tslice[:, anchor_count+np.arange(Xdrift_expts[ff].shape[1])] = Xdrift_expts[ff]
-                self.Xdrift[self.file_tstart[ff]+np.arange(self.fileNT[ff]), :] = deepcopy(tslice)
-                anchor_count += Xdrift_expts[ff].shape[1]
-
-        # set up train, val and test inds and blks
+        ### Set up train, val and test inds and blks
         self.crossval_setup(test_set=True)
     # END MultiClouds.__init__
 
     def read_file_info( self, file_n, filename ):
         """
-        Initial processing of each file to pull out salient info for building stim and responses
+        Initial processing of each file to pull out salient info needed to put data together for
+        multiexperiment dataset: particularly for building stim and responses, and trial-indexing
         
         Args:
             file_n (int): index of the file
@@ -250,6 +275,8 @@ class MultiClouds(SensoryBase):
             NMUs = 0
 
         # Unit information
+        if self.includeMUs:
+            NC = NSUs + NMUs
         channel_map = np.array(f['Robs_probe_ID'], dtype=np.int64)[0, :]
         channel_ratings = np.array(f['Robs_rating']).squeeze()
         if (NMUs > 0) & self.includeMUs:
@@ -279,7 +306,7 @@ class MultiClouds(SensoryBase):
         stim_locsET = np.array(f['ETstim_location'], dtype=np.int64)
 
         if 'stim_location_deltas' in f:
-            stim_location_deltas = np.array(f['stim_location_deltas'], dtype=np.int64)
+            stim_location_deltas = np.array(f['stim_location_deltas'], dtype=np.int64).T
         else:
             stim_location_deltas = None
         if 'cloud_binary' in f:
@@ -289,7 +316,7 @@ class MultiClouds(SensoryBase):
             cloud_scale = np.array(f['cloud_scale'], dtype=np.int64)
             cloud_info = np.concatenate( (cloud_binary, cloud_scale), axis=1 )
         else:
-            clound_info = None
+            cloud_info = None
 
         blockIDs = np.array(f['blockID'], dtype=np.int64).squeeze()  # what is this?
         #self.ETtrace = np.array(f['ETtrace'], dtype=np.float32)
@@ -301,49 +328,47 @@ class MultiClouds(SensoryBase):
         LRpresent = Lpresent + 2*Rpresent
 
         valid_inds = np.array(f['valid_data'], dtype=np.int64)-1  #range(self.NT)  # default -- to be changed at end of init
+        # Make valid data here
+        valid_data = np.zeros(NT, dtype=np.uint8)
+        valid_data[valid_inds] = 1
 
-        # Parse timing and block information given eye_config
-        if self.eye_config == 0:
-            tmap = np.arange(NT)
-            bmap = np.arange(NBLK)
-            block_inds = deepcopy(blk_inds)
-        else:
-            tmap = np.where(LRpresent == self.eye_config)[0]
-            # Check for contiguous option (throw away disjoint eye config)
-            if self.eye_contiguous & (self.eye_config > 0):
-                tbreaks = np.where(np.diff(tmap) > 1)[0]
-                if len(tbreaks) > 0:
-                    print("  Disjoint data exists with this eye_config -- trunctating to first section.")
-                    tmap = tmap[range(tbreaks[0]+1)]
+
+        # self.tranges set initially by correct eye config 
+        #self.tranges[file_n] = deepcopy(tmap)  
 
             # Remap valid_inds to smaller trange -- does not use val_track: just temp variable
-            val_track = np.zeros(NT, dtype=np.int64)
-            val_track[valid_inds] = 1
-            valid_inds = np.where(val_track[tmap] == 1)[0]
+            #val_track = np.zeros(NT, dtype=np.int64)
+            #val_track[valid_inds] = 1
+            #valid_inds = np.where(val_track[tmap] == 1)[0]
 
-            NT = len(tmap)
+            #NT = len(tmap)
  
             # Remap block_inds to reduced map
-            bmap = []
-            tcount = 0
-            block_inds = []
-            for bb in range(NBLK):
-                if blk_inds[bb,0] in tmap:
-                    bmap.append(bb)
-                    NTblk = blk_inds[bb,1]-blk_inds[bb,0]
-                    block_inds.append([tcount, tcount+NTblk])
-                    tcount += NTblk
-            block_inds = np.array(block_inds, dtype=np.int64)
-            # might have to modify blockIDs -- not done yet
+            #block_inds, bmap = self.parse_trial_times_expt( file_n, tmap )  # might want to do dynamically
+            #bmap = []
+            #tcount = 0
+            #block_inds = []
+            #for bb in range(NBLK):
+            #    if blk_inds[bb,0] in tmap:
+            #        bmap.append(bb)
+            #        NTblk = blk_inds[bb,1]-blk_inds[bb,0]
+            #        block_inds.append([tcount, tcount+NTblk])
+            #        tcount += NTblk
+            #block_inds = np.array(block_inds, dtype=np.int64)
+
+            # probably have to modify blockIDs -- not done yet
 
         return {
             'filename': filename,
             'NT': NT,
-            'tmap': tmap, 
-            'trial_info': block_inds, 
+            'NC': NC,
+            #'tmap': tmap, 
+            #'trial_info': block_inds,  # begin/end of each trial in tmap -- might want to generate dynamically
+            'blk_inds': blk_inds,  # begin/end of each trial in absolute trial time
             'LRpresent': LRpresent,
-            'valid_inds': valid_inds.squeeze(),
-            'blockIDs': blockIDs, # What is this again?  
+            #'valid_inds': valid_inds.squeeze(),
+            'valid_data': valid_data,
+            'blockIDs': blockIDs, # number corresponding to see that identifies stim in trial
             'NSUs': NSUs,
             'NMUs': NMUs,
             'channel_map': channel_map,
@@ -356,6 +381,33 @@ class MultiClouds(SensoryBase):
             'stim_location_deltas': stim_location_deltas,
             'cloud_info': cloud_info}
     # END MultiClouds.read_file_info()  
+
+    def parse_trial_times_expt( self, expt_n, trange ):
+        """
+        Makes block_inds for the trange within a given experiment, indexed to the beginning of the expt
+        
+        Args: 
+            expt_n (int): which experiment
+            trange (array): times in the experiment to include
+
+        Returns:
+            e_block_inds: a list of the indices associated with each trial
+            bmap: list of trials that were included within the experiment
+        """
+
+        blk_inds = self.file_info[expt_n]['blk_inds']  # begin/end of trials in absolute expt time
+        bmap = []  # which overall trials are included 
+        tcount = 0
+        e_block_inds = []
+        for bb in range(blk_inds.shape[0]):
+            if blk_inds[bb,0] in trange:
+                bmap.append(bb)
+                NTblk = blk_inds[bb,1]-blk_inds[bb,0]
+                e_block_inds.append([tcount, tcount+NTblk])
+                tcount += NTblk
+        e_block_inds = np.array(e_block_inds, dtype=np.int64)   # num_included_trials x 2
+        return e_block_inds, bmap
+    # END MultiClouds.parse_trial_times_expt()
 
     def modify_included_cells(self, clists, expt_n=None):
         """
@@ -374,22 +426,48 @@ class MultiClouds(SensoryBase):
             assert len(clists) == self.Nexpts, "Number of cell_lists must match number of experiments."
         else:
             expts = [expt_n]
-            
+            clists_tmp = [[]]*self.Nexpts
+            clists_tmp[expt_n] = deepcopy(clists)
+            clists = clists_tmp
+
         for ff in expts:
-            if len(clists[ff]) > 0:
+            if len(clists[ff]) > 0:  # then modify this experiment
                 assert np.max(clists[ff]) < (self.file_info[ff]['NSUs'] + self.file_info[ff]['NMUs']), "clists too large"
                 self.cranges[ff] = deepcopy(clists[ff])
-            else:
-                if self.includeMUs:
-                    self.cranges[ff] = np.arange(self.file_info[ff]['NSUs']+self.file_info[ff]['NMUs'])
-                else:
-                    self.cranges[ff] = np.arange(self.file_info[ff]['NSUs'])
+            else: # don't modify experiment: use previous cranges
+                if self.cranges[ff] is None:
+                    if self.includeMUs:
+                        self.cranges[ff] = np.arange(self.file_info[ff]['NSUs']+self.file_info[ff]['NMUs'])
+                    else:
+                        self.cranges[ff] = np.arange(self.file_info[ff]['NSUs'])
 
-            self.fileNC[ff] = len(self.cranges[ff])
-        self.NC = np.sum(self.fileNC)
+            self.exptNC[ff] = len(self.cranges[ff])
+        self.NC = np.sum(self.exptNC)
 
         self.assemble_robs()
     # END MultiClouds.modify_included_cells()
+
+    def modify_expt_time_range(self, trange, expt_n=0, absolute_time_scale=True):
+        """
+        there is an existing trange -- trange assumed to be absolute_time_scale, but could be mod
+        #self.tranges[ff] = self.file_info[ff]['tmap']
+        # will have to change self.tranges, re-assemble_robs, and rebuild stim (if built already)
+        # will also have to go through and trim out irrelevant trials, and renumber -- how do this?
+        """
+        if absolute_time_scale:
+            self.tranges[expt_n] = np.intersect1d( trange, self.tranges[expt_n])
+        else:
+            self.tranges[expt_n] = self.tranges[expt_n][trange]
+        
+        # Recalculate NT and expt_tstarts and exptNT
+        self.NT = 0
+        for ee in range(self.Nexpts):
+            self.expt_tstart[ee] = self.NT
+            self.exptNT[ee] = len(self.tranges[ee])
+            self.NT += self.exptNT[ee]
+
+        self.assemble_robs()
+    # END MultiClouds.modify_expt_time_range()
 
     def generate_array_cell_list(self, expt_n=0, which_array=0):
         """
@@ -419,7 +497,7 @@ class MultiClouds(SensoryBase):
 
         cstart = 0
         for ff in range(expt_n):
-            cstart += self.fileNC[ff]
+            cstart += self.exptNC[ff]  # not vetted
         nspks = np.sum(self.robs.astype(np.float32)*self.dfs.astype(np.float32), axis=0)[cstart+array_cells]
 
         val_array = array_cells[nspks > 20]
@@ -428,8 +506,10 @@ class MultiClouds(SensoryBase):
 
     def assemble_robs(self):
         """
-        Takes current information (robs and dfs) to make robs and dfs (full version)
-        Note this can be replaced by using the spike times explicitly
+        Takes current information (robs and dfs) to make robs and dfs (full version).
+        This uses the info in self.tranges() and squares with the file_info.
+        It will also re-generate block_inds
+        ** Note this can be replaced by using the spike times explicitly
         
         Returns:
             None
@@ -437,14 +517,16 @@ class MultiClouds(SensoryBase):
 
         self.robs = np.zeros( [self.NT, self.NC], dtype=np.uint8 )
         self.dfs = np.zeros( [self.NT, self.NC], dtype=np.uint8 )
+        self.block_inds = []
 
         tcount, ccount = 0, 0
+        blkcount = 0
         for ff in range(self.Nexpts):
-            NTexpt = self.file_info[ff]['NT']
+            #NTexpt = self.file_info[ff]['NT']
+            NTexpt = len(self.tranges[ff])
             NSUs = self.file_info[ff]['NSUs']
 
-            valid_data = np.zeros(NTexpt, dtype=np.uint8)
-            valid_data[self.file_info[ff]['valid_inds']] = 1
+            valid_data = self.file_info[ff]['valid_data']
 
             # Classify cell-lists in terms of SUs and MUc
             su_list = self.cranges[ff][self.cranges[ff] < NSUs]
@@ -455,16 +537,16 @@ class MultiClouds(SensoryBase):
             R_tslice[:, ccount+np.arange(len(su_list))] = deepcopy(tslice[:, su_list])
             tslice = np.array(self.fhandles[ff]['datafilts'], dtype=np.uint8)[self.tranges[ff], :]
             # Also take valid_data into account
-            df_tslice[:, ccount+np.arange(len(su_list))] = deepcopy(tslice[:, su_list]) * valid_data[:, None]
+            df_tslice[:, ccount+np.arange(len(su_list))] = deepcopy(tslice[:, su_list]) * valid_data[self.tranges[ff], None]
             ccount += len(su_list)
 
             if self.include_MUs:
-                NMUs= self.file_info[ff]['NMUs']
+                NMUs = self.file_info[ff]['NMUs']
                 mu_list = self.cranges[ff][self.cranges[ff] >= NSUs]-NSUs
                 tslice = np.array(self.fhandles[ff]['RobsMU'], dtype=np.int64)[self.tranges[ff], :]
                 R_tslice[:, ccount+np.arange(len(mu_list))] = deepcopy(tslice[:, mu_list])
                 tslice = np.array(self.fhandles[ff]['datafiltsMU'], dtype=np.int64)[self.tranges[ff], :]
-                df_tslice[:, ccount+np.arange(len(mu_list))] = deepcopy(tslice[:, mu_list]) * valid_data[:, None]
+                df_tslice[:, ccount+np.arange(len(mu_list))] = deepcopy(tslice[:, mu_list]) * valid_data[self.tranges[ff], None]
                 ccount += len(mu_list)
 
             # Check that clipping to uint8 wont screw up any robs
@@ -476,9 +558,22 @@ class MultiClouds(SensoryBase):
             # Write tslice into 
             self.robs[tcount+np.arange(NTexpt), :] = deepcopy( R_tslice.astype(np.uint8) )
             self.dfs[tcount+np.arange(NTexpt), :] = deepcopy( df_tslice )
+            #self.robs[tcount+np.arange(NTslice), :] = deepcopy( R_tslice[self.tranges[ff], :].astype(np.uint8) )
+            #self.dfs[tcount+np.arange(NTslice), :] = deepcopy( df_tslice[self.tranges[ff], :] )
 
+            # Make block_inds
+            e_block_inds, _ = self.parse_trial_times_expt(ff, self.tranges[ff] )
+            NBLK = e_block_inds.shape[0]
+            for bb in range(NBLK):
+                self.block_inds.append( 
+                    tcount + np.arange(e_block_inds[bb, 0], e_block_inds[bb, 1]) )
+            self.exptNBLK[ff] = NBLK
+            self.expt_blkstart[ff] = blkcount
+            
+            blkcount += NBLK
             tcount += NTexpt
 
+        self.NT = tcount
         self.trialfilter_dfs()
     # END MultiClouds.assemble_robs()
 
@@ -488,21 +583,23 @@ class MultiClouds(SensoryBase):
         """
         for ff in range(self.Nexpts):
             print('  %2d  %s'%(ff, self.filenames[ff]) )
+    # END MultiClouds.list_expts()
         
-    def updateDF( self, expt_n, dfs, reduce_cells=False ):
+    def updateDF( self, dfs=None, expt_n=0, reduce_cells=False ):
         """
         Import updated DF for given experiment, as numbered (can see with 'list_expts')
-        Will check for neurons with no robs and reduce robs and dataset if reduce_cells=True
+        Will check for neurons with no spikes and reduce robs and dataset if reduce_cells=True
         
         Args:
-            expt_n (int): index of the experiment
             dfs (np.array): array of new dfs
+            expt_n (int): index of the experiment, default=0
             reduce_cells (bool): whether to reduce the number of cells
 
         Returns:
             None
         """
 
+        assert dfs is not None, "updateDF: forgot dfs, dingbat"
         assert expt_n < self.Nexpts, "updateDF: expt_n too large: not that many experiments"
 
         # if eye_config, then want to replace whole DFs, or relevant DFs 
@@ -513,19 +610,20 @@ class MultiClouds(SensoryBase):
         dfs = dfs[:, self.cranges[expt_n]]
 
         # Replace dfs with updated
-        trange = self.file_tstart[expt_n] + np.arange(dfs.shape[0])
+        trange = self.expt_tstart[expt_n] + np.arange(dfs.shape[0])
         df_tslice = deepcopy( self.dfs[trange, :] )
-        crange = np.arange(self.fileNC[expt_n])
+        crange = self.cranges[expt_n]
         if expt_n > 0:
-            crange += np.sum(self.fileNC[:expt_n])
+            crange += np.sum(self.exptNC[:expt_n])
         df_tslice[:, crange] = dfs.astype(np.uint8)
         self.dfs[trange, :] = deepcopy(df_tslice)
 
         if reduce_cells:
-            elim_cells = np.where(np.sum(dfs, axis=0) == 0)[0]
-            if elim_cells > 0:
-                print('  reduce_cells not implemented yet')
-                print( ' Cells to reduce:', elim_cells )
+            keep_cells = np.where(np.sum(dfs, axis=0) == 0)[0]
+            if len(keep_cells) < self.exptNC[expt_n]:
+                # note this list is already assuming previous cranges
+                print( '  updateDF: eliminating %d out of %d cells'%(self.exptNC[expt_n]-len(keep_cells), self.exptNC[expt_n]) )
+                self.modify_included_cells(self.cranges[expt_n][keep_cells], expt_n=expt_n)
         
         self.trialfilter_dfs()
     # END MultiClouds.updateDF()
@@ -549,6 +647,7 @@ class MultiClouds(SensoryBase):
             None
         """
         print('Currently not implemented -- needs to have microsaccades labeled well with time first')
+    # END MultiClouds.assemble_saccade_inds()
 
     def is_fixpoint_present( self, boxlim, expt_n ):
         """
@@ -610,8 +709,12 @@ class MultiClouds(SensoryBase):
 
         #eyepos = shifts   # shifts that is passed in is actually the eye position
 
-        assert expt_n is not None, "CONSTRUCT_STIMULUS: must specify expt_n"
+        assert expt_n is not None, "BUILD_STIM: must specify expt_n"
+        assert np.sum(abs(self.file_info[expt_n]['stim_location_deltas'])) == 0, "BUILD_STIM: There are stim-deltas but not implemented yet."
         # Delete existing stim and clear cache to prevent memory issues on GPU
+        if eyepos is not None:  # make sure empty list is same as None
+            if len(eyepos) == 0:
+                eyepos = None
 
         need2crop = False
         if LMS:
@@ -707,9 +810,10 @@ class MultiClouds(SensoryBase):
             #locsLP = self.file_info[expt_n]['stim_locsLP']
             if self.binocular:
                 num_clr *= 2  # make binocular be like just 2x more colors (channel dim)
-                Lpresent = np.array(fhandle['useLeye'], dtype=int)[:,0]
-                Rpresent = np.array(fhandle['useReye'], dtype=int)[:,0]
-                LRpresent = Lpresent + 2*Rpresent
+                #Lpresent = np.array(fhandle['useLeye'], dtype=int)[:,0]
+                #Rpresent = np.array(fhandle['useReye'], dtype=int)[:,0]
+                #LRpresent = Lpresent + 2*Rpresent
+                LRpresent = self.file_info[expt_n]['LRpresent'][self.tranges[expt_n]]
                 Leye = inds[LRpresent[inds] != 2]
                 Reye = inds[LRpresent[inds] != 1]
                 self.binocular_gain = torch.zeros( [len(LRpresent), 2], dtype=torch.float32 )
@@ -717,11 +821,11 @@ class MultiClouds(SensoryBase):
                 self.binocular_gain[LRpresent == 2, 1] = 1.0
                 if self.luminance_only: 
                     #empty_stimET=np.zeros((np.shape(stimET)[0], 2, np.shape(stimET)[2], np.shape(stimET)[3]))
-                    stimLP=np.zeros((np.shape(stimLP_base)[0], 2, np.shape(stimLP_base)[2], np.shape(stimLP_base)[3]))
+                    stimLP = np.zeros((np.shape(stimLP_base)[0], 2, np.shape(stimLP_base)[2], np.shape(stimLP_base)[3]))
                     stimLP[Leye, 0, ...] = np.array(fhandle['stim'], dtype=np.float32)[Leye, 0, ...]
                     stimLP[Reye, 1, ...] = np.array(fhandle['stim'], dtype=np.float32)[Reye, 0, ...]
                     if stimET_base is not None:
-                        stimET=np.zeros((np.shape(stimET_base)[0], 2, np.shape(stimET_base)[2], np.shape(stimET_base)[3]))
+                        stimET = np.zeros((np.shape(stimET_base)[0], 2, np.shape(stimET_base)[2], np.shape(stimET_base)[3]))
                         stimET[Leye, 0, ...] = np.array(fhandle['stimET'], dtype=np.float32)[Leye, 0, ...]
                         stimET[Reye, 1, ...] = np.array(fhandle['stimET'], dtype=np.float32)[Reye, 0, ...]
                 else:
@@ -729,12 +833,12 @@ class MultiClouds(SensoryBase):
                     stimLP[Leye, 0:3, ...] = np.array(fhandle['stim'], dtype=np.float32)[Leye, ...]
                     stimLP[Reye, 3:6, ...] = np.array(fhandle['stim'], dtype=np.float32)[Reye, ...]
                     if stimET_base is not None:
-                        stimET=np.zeros((np.shape(stimET_base)[0], 6, np.shape(stimET_base)[2], np.shape(stimET_base)[3]))
+                        stimET = np.zeros((np.shape(stimET_base)[0], 6, np.shape(stimET_base)[2], np.shape(stimET_base)[3]))
                         stimET[Leye, 0:3, ...] = np.array(fhandle['stimET'], dtype=np.float32)[Leye, ...]
                         stimET[Reye, 3:6, ...] = np.array(fhandle['stimET'], dtype=np.float32)[Reye, ...]
             else:
-                stimET=stimET_base
-                stimLP=stimLP_base
+                stimET = stimET_base
+                stimLP = stimLP_base
                 if self.luminance_only:
                     stimLP = stimLP[:, 0, ...][:, None, ...]
                 if stimET_base is not None:
@@ -743,7 +847,7 @@ class MultiClouds(SensoryBase):
                         if stimET_base is not None: 
                             stimET = stimET[:, 0, ...][:, None, ...]  # maintain 2nd dim (length 1)
          
-            NT = self.fileNT[expt_n]
+            NT = self.exptNT[expt_n]
             newstim = np.zeros( [NT, num_clr, L, L], dtype=np.int8 )
             for ii in range(locsLP.shape[1]):
                 OVLP = self.rectangle_overlap_ranges(stim_pos, locsLP[:, ii])
@@ -789,9 +893,11 @@ class MultiClouds(SensoryBase):
                 eyepos = eyepos[self.tranges[expt_n]]
             if len(eyepos) < newstim.shape[0] and self.binocular:
                 eyepos_padded=np.zeros((newstim.shape[0], 2))
-                Lpresent = np.array(fhandle['useLeye'], dtype=int)[:,0]
-                Rpresent = np.array(fhandle['useReye'], dtype=int)[:,0]
-                LRpresent = Lpresent + 2*Rpresent
+                #Lpresent = np.array(fhandle['useLeye'], dtype=int)[:,0]
+                #Rpresent = np.array(fhandle['useReye'], dtype=int)[:,0]
+                #LRpresent = Lpresent + 2*Rpresent
+                LRpresent = self.file_info[expt_n]['LRpresent'][self.tranges[expt_n]]
+
                 bin_inds=inds[np.where(LRpresent[inds]==3)]
                 if len(bin_inds)!=len(eyepos):
                     eyepos_padded[bin_inds[0]:bin_inds[0]+len(eyepos)]=eyepos #Off by one errors, probably. 
@@ -838,7 +944,7 @@ class MultiClouds(SensoryBase):
             newstim = np.einsum( 'axcd,bx->abcd', newstim, DKL2LMS)
 
         # Flatten stim 
-        self.expt_stims[expt_n] = deepcopy(newstim.reshape([self.fileNT[expt_n], -1]))
+        self.expt_stims[expt_n] = deepcopy(newstim.reshape([self.exptNT[expt_n], -1]))
         print( "  Done: expt", expt_n )
     # END MultiClouds.build_stim()
 
@@ -861,7 +967,7 @@ class MultiClouds(SensoryBase):
         self.stim = np.zeros( [self.NT, num_dims], dtype=np.int8 )
         for ff in range(self.Nexpts):
             assert self.expt_stims[ff] is not None, 'ASSEMBLE_STIM: stim %d is not yet built.'%ff  
-            trange = range(self.file_tstart[ff], self.file_tstart[ff]+self.fileNT[ff])
+            trange = range(self.expt_tstart[ff], self.expt_tstart[ff]+self.exptNT[ff])
             self.stim[trange, :] = self.expt_stims[ff]
         print( "Stimulus assembly complete")
     # END MultiClouds.assemble_stimulus()
@@ -1224,7 +1330,7 @@ class MultiClouds(SensoryBase):
         """
 
         assert sacc_in is not None, "Need to enter saccade times"
-        NT = self.fileNT[expt_n]
+        NT = self.exptNT[expt_n]
         assert np.max(sacc_in) < NT, "sacc list is too long"
         if sacc_metrics is None:
             sac_ts = sacc_in
