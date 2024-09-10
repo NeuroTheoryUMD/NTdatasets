@@ -3,6 +3,7 @@ import h5py
 import numpy as np
 from torch.utils.data import Dataset
 from ColorDataUtils.simproj_utils import downsample_stim
+from NTdatasets.sensory_base import SensoryBase
 
 class SimCloudData(Dataset):
     """
@@ -10,7 +11,6 @@ class SimCloudData(Dataset):
     """
     def __init__(self,
         file_name,
-        device=None,
         block_len=1000,
         down_sample=None,
         num_lags=12,
@@ -18,17 +18,11 @@ class SimCloudData(Dataset):
         """
         Args:
             file_name: Name of the HDF5 file to be used as a string.
-            device: Device in which data lives. (Defalut None)
             block_len: Number of time points in each block. Must be a multiple of the total number of time points. (Defalut 1000)
             down_sample: How much to down sample the stim. If down_sample=2 and stim is of dimension LxL brings down to L/2xL/2. (Default 2)
             num_lags: How many time points to lag by. (Default 12)
             cell_idx: Index of cells to use as list. (Default None)
         """
-        if device is None:
-            self.device = torch.device('cpu')
-        else:
-            self.device = device
-
         
         with h5py.File(file_name, 'r') as f:
             init_stim = f['stim'][:]
@@ -38,6 +32,8 @@ class SimCloudData(Dataset):
                 self.robs = f['robs'][:][:,cell_idx]
             file_start_pos = list(f['file_start_pos'][:])
 
+        self.trial_sample = True
+        
         self.block_len = block_len   # block length
         self.NT = init_stim.shape[0] # number of time points
         assert self.NT%self.block_len == 0, "Number of time points is not divisible by "+str(self.block_len)
@@ -68,18 +64,24 @@ class SimCloudData(Dataset):
     def __len__(self):
         return self.stim.shape[0]
 
-    def __getitem__(self, block_index):
-        index = self.blocks[block_index,:].flatten()
-        N_blocks = self.blocks[block_index,:].shape[0]
+    def __getitem__(self, index):
+        #index = self.blocks[block_index,:].flatten()
+        N_blocks = self.blocks[index,:].shape[0]
+
+        index = SensoryBase.index_to_array(index, N_blocks)
+        ts = self.blocks[index[0]]
+        for j in index[1:]:
+            ts = np.concatenate((ts, self.blocks[j]), axis=0 )
+        index = ts
         
         block_dfs = self.dfs[index,...]
         for i in range(N_blocks):
             block_dfs[i*self.block_len:(i*self.block_len)+self.num_lags,:] = 0
         
         data_dict = {}
-        data_dict['stim'] = (torch.tensor(self.stim[index,...], dtype=torch.float32).to(self.device)-127.0)/50.0
-        data_dict['robs'] = torch.tensor(self.robs[index,...], dtype=torch.float32).to(self.device)
-        data_dict['dfs'] = torch.tensor(block_dfs, dtype=torch.float32).to(self.device)
+        data_dict['stim'] = (torch.tensor(self.stim[index,...], dtype=torch.float32)-127.0)/50.0
+        data_dict['robs'] = torch.tensor(self.robs[index,...], dtype=torch.float32)
+        data_dict['dfs'] = torch.tensor(block_dfs, dtype=torch.float32)
         return data_dict
 
 
