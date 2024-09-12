@@ -51,9 +51,11 @@ class SimCloudData(Dataset):
         
         self.NB = self.NT//self.block_len # number of blocks
         self.blocks = np.arange(self.NT, dtype=np.int64).reshape(self.NB,self.block_len) # block indecies
-        
-        self.train_inds = np.arange((self.NB//5)*4, dtype=np.int64)
-        self.val_inds = np.arange((self.NB//5)*4, self.NB, dtype=np.int64)
+
+        self.val_inds = None
+        self.train_inds = None
+        self.train_blks = np.arange((self.NB//5)*4, dtype=np.int64)
+        self.val_blks = np.arange((self.NB//5)*4, self.NB, dtype=np.int64)
 
         self.num_lags = num_lags
         self.dfs = np.ones(self.robs.shape)
@@ -65,14 +67,14 @@ class SimCloudData(Dataset):
         return self.stim.shape[0]
 
     def __getitem__(self, index):
-        #index = self.blocks[block_index,:].flatten()
         N_blocks = self.blocks[index,:].shape[0]
-
-        index = SensoryBase.index_to_array(index, N_blocks)
-        ts = self.blocks[index[0]]
-        for j in index[1:]:
-            ts = np.concatenate((ts, self.blocks[j]), axis=0 )
-        index = ts
+        index = self.blocks[index,:].flatten()
+        
+        #index = SensoryBase.index_to_array(index, N_blocks)
+        #ts = self.blocks[index[0]]
+        #for j in index[1:]:
+        #    ts = np.concatenate((ts, self.blocks[j]), axis=0 )
+        #index = ts
         
         block_dfs = self.dfs[index,...]
         for i in range(N_blocks):
