@@ -50,7 +50,7 @@ class SimCloudData(Dataset):
         self.stim_dims = [1, L, L, 1]
         
         self.NB = self.NT//self.block_len # number of blocks
-        self.blocks = np.arange(self.NT, dtype=np.int64).reshape(self.NB,self.block_len) # block indecies
+        self.block_inds = np.arange(self.NT, dtype=np.int64).reshape(self.NB,self.block_len) # block indecies
 
         self.val_inds = None
         self.train_inds = None
@@ -67,13 +67,13 @@ class SimCloudData(Dataset):
         return self.stim.shape[0]
 
     def __getitem__(self, index):
-        N_blocks = self.blocks[index,:].shape[0]
-        index = self.blocks[index,:].flatten()
+        N_blocks = self.block_inds[index,:].shape[0]
+        index = self.block_inds[index,:].flatten()
         
         #index = SensoryBase.index_to_array(index, N_blocks)
-        #ts = self.blocks[index[0]]
+        #ts = self.block_inds[index[0]]
         #for j in index[1:]:
-        #    ts = np.concatenate((ts, self.blocks[j]), axis=0 )
+        #    ts = np.concatenate((ts, self.block_inds[j]), axis=0 )
         #index = ts
         
         block_dfs = self.dfs[index,...]
