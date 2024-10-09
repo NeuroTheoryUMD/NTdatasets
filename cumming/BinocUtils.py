@@ -353,8 +353,10 @@ def disparity_predictions(
 
     #dpredmod.fit( Ddata, force_dict_training=True, train_inds=mod_indxs, val_inds=mod_indxs, 
     #            **lbfgs_pars, verbose=0, version=1)
-    utils.iterate_lbfgs( dpredmod, Ddata, lbfgs_pars, train_inds=mod_indxs, val_inds=mod_indxs, verbose=False )
-    utils.iterate_lbfgs( tpredmod, Ddata, lbfgs_pars, train_inds=mod_indxs, val_inds=mod_indxs, verbose=False )
+    #utils.iterate_lbfgs( dpredmod, Ddata, lbfgs_pars, train_inds=mod_indxs, val_inds=mod_indxs, verbose=False )
+    #utils.iterate_lbfgs( tpredmod, Ddata, lbfgs_pars, train_inds=mod_indxs, val_inds=mod_indxs, verbose=False )
+    utils.fit_lbfgs( dpredmod, Ddata[mod_indxs], verbose=False )
+    utils.fit_lbfgs( tpredmod, Ddata[mod_indxs], verbose=False )
     #tpredmod.fit( Ddata, force_dict_training=True, train_inds=mod_indxs, val_inds=mod_indxs, 
     #            **lbfgs_pars, verbose=0, version=1)
 

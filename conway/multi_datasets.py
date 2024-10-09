@@ -409,14 +409,14 @@ class MultiClouds(SensoryBase):
         return e_block_inds, bmap
     # END MultiClouds.parse_trial_times_expt()
 
-    def modify_included_cells(self, clists, expt_n=None):
+    def modify_included_cells(self, clists, expt_n=None, reset_cell_lists=False):
         """
         Modify the included cells in the dataset
 
         Args:
             clists (list): list of lists of cell indices to include in the dataset
             expt_n (int): index of the experiment to modify
-
+            reset_cell_lists (Boolean): whether to reset DFs to default if not included in list
         Returns:
             None
         """
@@ -434,12 +434,13 @@ class MultiClouds(SensoryBase):
             if len(clists[ff]) > 0:  # then modify this experiment
                 assert np.max(clists[ff]) < (self.file_info[ff]['NSUs'] + self.file_info[ff]['NMUs']), "clists too large"
                 self.cranges[ff] = deepcopy(clists[ff])
-            else: # don't modify experiment: use previous cranges
-                if self.cranges[ff] is None:
-                    if self.includeMUs:
-                        self.cranges[ff] = np.arange(self.file_info[ff]['NSUs']+self.file_info[ff]['NMUs'])
-                    else:
-                        self.cranges[ff] = np.arange(self.file_info[ff]['NSUs'])
+            else: # don't modify experiment: use default (full) cranges
+                if reset_cell_lists:
+                    if self.cranges[ff] is None:
+                        if self.includeMUs:
+                            self.cranges[ff] = np.arange(self.file_info[ff]['NSUs']+self.file_info[ff]['NMUs'])
+                        else:
+                            self.cranges[ff] = np.arange(self.file_info[ff]['NSUs'])
 
             self.exptNC[ff] = len(self.cranges[ff])
         self.NC = np.sum(self.exptNC)
@@ -467,6 +468,8 @@ class MultiClouds(SensoryBase):
             self.NT += self.exptNT[ee]
 
         self.assemble_robs()
+        print('  Redoing cross-validation indices')
+        self.crossval_setup()
     # END MultiClouds.modify_expt_time_range()
 
     def generate_array_cell_list(self, expt_n=0, which_array=0):
@@ -504,7 +507,7 @@ class MultiClouds(SensoryBase):
         return val_array
     # END MultiClouds.generate_array_cell_list()
 
-    def assemble_robs(self):
+    def assemble_robs(self, reset_dfs=False):
         """
         Takes current information (robs and dfs) to make robs and dfs (full version).
         This uses the info in self.tranges() and squares with the file_info.
@@ -524,30 +527,45 @@ class MultiClouds(SensoryBase):
         for ff in range(self.Nexpts):
             #NTexpt = self.file_info[ff]['NT']
             NTexpt = len(self.tranges[ff])
-            NSUs = self.file_info[ff]['NSUs']
-
+            #NSUs = self.file_info[ff]['NSUs']
+            #su_list = self.cranges[ff][self.cranges[ff] < NSUs]
             valid_data = self.file_info[ff]['valid_data']
 
-            # Classify cell-lists in terms of SUs and MUc
-            su_list = self.cranges[ff][self.cranges[ff] < NSUs]
+            # Assume cranges are correct
+             
+            # Classify cell-lists in terms of SUs and MUs            
             R_tslice = np.zeros( [NTexpt, self.NC], dtype=np.int64 )
             df_tslice = np.zeros( [NTexpt, self.NC], dtype=np.uint8 )
 
             tslice = np.array(self.fhandles[ff]['Robs'], dtype=np.int64)[self.tranges[ff], :]
-            R_tslice[:, ccount+np.arange(len(su_list))] = deepcopy(tslice[:, su_list])
-            tslice = np.array(self.fhandles[ff]['datafilts'], dtype=np.uint8)[self.tranges[ff], :]
-            # Also take valid_data into account
-            df_tslice[:, ccount+np.arange(len(su_list))] = deepcopy(tslice[:, su_list]) * valid_data[self.tranges[ff], None]
-            ccount += len(su_list)
-
             if self.include_MUs:
-                NMUs = self.file_info[ff]['NMUs']
-                mu_list = self.cranges[ff][self.cranges[ff] >= NSUs]-NSUs
-                tslice = np.array(self.fhandles[ff]['RobsMU'], dtype=np.int64)[self.tranges[ff], :]
-                R_tslice[:, ccount+np.arange(len(mu_list))] = deepcopy(tslice[:, mu_list])
-                tslice = np.array(self.fhandles[ff]['datafiltsMU'], dtype=np.int64)[self.tranges[ff], :]
-                df_tslice[:, ccount+np.arange(len(mu_list))] = deepcopy(tslice[:, mu_list]) * valid_data[self.tranges[ff], None]
-                ccount += len(mu_list)
+                tslice = np.concatenate( 
+                    (tslice, np.array(self.fhandles[ff]['RobsMU'], dtype=np.int64)[self.tranges[ff], :]),
+                    axis=1)
+            #R_tslice[:, ccount+np.arange(len(su_list))] = deepcopy(tslice[:, su_list])
+            R_tslice[:, ccount+np.arange(self.exptNC[ff])] = deepcopy(tslice[:, self.cranges[ff]])
+            
+            tslice = np.array(self.fhandles[ff]['datafilts'], dtype=np.uint8)[self.tranges[ff], :]
+            if self.include_MUs:
+                tslice = np.concatenate( 
+                    (tslice, np.array(self.fhandles[ff]['datafiltsMU'], dtype=np.uint8)[self.tranges[ff], :]),
+                    axis=1)
+            # Also take valid_data into account
+            #df_tslice[:, ccount+np.arange(len(su_list))] = deepcopy(tslice[:, su_list]) * valid_data[self.tranges[ff], None]
+            df_tslice[:, ccount+np.arange(self.exptNC[ff])] = deepcopy(tslice[:, self.cranges[ff]]) * valid_data[self.tranges[ff], None]
+            ccount += self.exptNC[ff] #len(su_list)
+
+            #if self.include_MUs:
+            #    NMUs = self.file_info[ff]['NMUs']
+            #    mu_list = self.cranges[ff][self.cranges[ff] >= NSUs]-NSUs
+            #    if reset_dfs:
+            #        tslice = np.array(self.fhandles[ff]['RobsMU'], dtype=np.int64)[self.tranges[ff], :]
+            #    else: 
+            #        tslice = 
+            #    R_tslice[:, ccount+np.arange(len(mu_list))] = deepcopy(tslice[:, mu_list])
+            #    tslice = np.array(self.fhandles[ff]['datafiltsMU'], dtype=np.int64)[self.tranges[ff], :]
+            #    df_tslice[:, ccount+np.arange(len(mu_list))] = deepcopy(tslice[:, mu_list]) * valid_data[self.tranges[ff], None]
+            #    ccount += len(mu_list)
 
             # Check that clipping to uint8 wont screw up any robs
             robs_ceil = np.where(R_tslice > 255)
@@ -603,23 +621,30 @@ class MultiClouds(SensoryBase):
         assert expt_n < self.Nexpts, "updateDF: expt_n too large: not that many experiments"
 
         # if eye_config, then want to replace whole DFs, or relevant DFs 
-        if dfs.shape[0] != self.file_info[expt_n]['NT']:
+        #if dfs.shape[0] != self.file_info[expt_n]['NT']:
+        if dfs.shape[0] > len(self.tranges[expt_n]):
             # Assume need to use trange
             dfs = dfs[self.tranges[expt_n], :]
-        assert dfs.shape[0] == self.file_info[expt_n]['NT'], "DF file mismatch: wrong length"
+        #if dfs.shape[1] > len(self.cranges[expt_n]):
+        #    dfs = dfs[:, self.cranges[expt_n]]
+
+        assert dfs.shape[0] == len(self.tranges[expt_n]) #self.file_info[expt_n]['NT'], "DF file mismatch: wrong length"
         dfs = dfs[:, self.cranges[expt_n]]
 
         # Replace dfs with updated
         trange = self.expt_tstart[expt_n] + np.arange(dfs.shape[0])
         df_tslice = deepcopy( self.dfs[trange, :] )
-        crange = self.cranges[expt_n]
+        #crange = self.cranges[expt_n]
+        cindx = np.arange(len(self.cranges[expt_n]))
         if expt_n > 0:
-            crange += np.sum(self.exptNC[:expt_n])
-        df_tslice[:, crange] = dfs.astype(np.uint8)
+            #crange += np.sum(self.exptNC[:expt_n])
+            cindx += np.sum(self.exptNC[:expt_n])
+        #df_tslice[:, crange] = dfs.astype(np.uint8)
+        df_tslice[:, cindx] = dfs.astype(np.uint8)
         self.dfs[trange, :] = deepcopy(df_tslice)
 
         if reduce_cells:
-            keep_cells = np.where(np.sum(dfs, axis=0) == 0)[0]
+            keep_cells = np.where(np.sum(dfs, axis=0) > 0)[0]
             if len(keep_cells) < self.exptNC[expt_n]:
                 # note this list is already assuming previous cranges
                 print( '  updateDF: eliminating %d out of %d cells'%(self.exptNC[expt_n]-len(keep_cells), self.exptNC[expt_n]) )
@@ -710,7 +735,8 @@ class MultiClouds(SensoryBase):
         #eyepos = shifts   # shifts that is passed in is actually the eye position
 
         assert expt_n is not None, "BUILD_STIM: must specify expt_n"
-        assert np.sum(abs(self.file_info[expt_n]['stim_location_deltas'])) == 0, "BUILD_STIM: There are stim-deltas but not implemented yet."
+        if self.file_info[expt_n]['stim_location_deltas'] is not None:
+            assert np.sum(abs(self.file_info[expt_n]['stim_location_deltas'])) == 0, "BUILD_STIM: There are stim-deltas but not implemented yet."
         # Delete existing stim and clear cache to prevent memory issues on GPU
         if eyepos is not None:  # make sure empty list is same as None
             if len(eyepos) == 0:
@@ -1160,6 +1186,59 @@ class MultiClouds(SensoryBase):
         plt.show()
     # END .draw_stim_locations()
     
+    def restrict2good_fixations( self, ETmetrics, expt_n=None, thresh=0.9 ):
+        """
+        Modifies data_filters with valid fixation data. For now, would need 
+        to re-run assemble_robs. ETmetrics can be for all experiments (if list), or just one
+
+        Args: 
+            ETmetrics: array that is length of trange[ee]. This metric that is best correlated 
+                with fixation quality and has a range in the 0.8-1.0 (where 0.8 is best). Make this
+                a list of ETmetrics (one item for each expt) if passing in multiple.
+            expt_n: which experiment to apply metrics to. Will assume all if ETmetrics is a list, or
+                expt 0 if ETmetrics is just a single value
+            thresh: metric threshold (between 0.8-1, default=0.9), with lower corresponding to better qual
+
+        Returns:
+            None, but modifies self.dfs accordingly
+        """
+
+        # First make sure that getting a list of experiments with matching list of ETmetrics
+        if isinstance(ETmetrics, list):
+            assert expt_n is None, "Cannot use ETmetrics as list if not doing all experiments"
+            assert len(ETmetrics) == self.Nexpts, "ETmetrics list is wrong length"
+            expt_n = np.arange(self.Nexpts)
+        else:
+            ETmetrics = [ETmetrics]
+            if self.Nexpts == 1:
+                expt_n = [0]
+            else:
+                assert expt_n is not None, "Need to specify which expt_n"
+                if not isinstance(expt_n, list):
+                    expt_n = [expt_n]
+
+        for ii in range(len(expt_n)):
+            ee = expt_n[ii]
+            assert len(ETmetrics[ii]) == self.exptNT[ee], "ETmetrics is wrong temporal length"
+            trange = np.sum(self.exptNT[:ee]) + np.arange(self.exptNT[ee])
+            crange = np.sum(self.exptNC[:ee]) + np.arange(self.exptNC[ee])
+            df_tslice = deepcopy(self.dfs[trange,:])  # this is all cells from all experiments
+        
+            val_fix = np.zeros([len(trange),1], dtype=np.uint8)
+            val_fix[np.where(ETmetrics[ii] <= thresh)[0]] = 1
+
+            print( "  Expt #%d: %0.1f percent of data remaining."%(ee, 100*np.sum(val_fix)/len(val_fix)) )
+            # Make so that not including small intervals
+            val_transitions = np.where(np.diff(val_fix.squeeze()) > 0)[0]
+            for jj in range(len(val_transitions)-1):
+                if val_transitions[jj+1]-val_transitions[jj] < 4:
+                    if val_fix[val_transitions[jj]+1] > 0:
+                        val_fix[val_transitions[jj]:(val_transitions[jj+1]+1)] = 0
+
+            df_tslice[:, crange] *= val_fix
+            self.dfs[trange, :] = deepcopy(df_tslice)
+    # END MultiClouds.valid_fixations()
+
     def avrates( self, inds=None ):
         """
         Calculates average firing probability across specified inds (or whole dataset)
