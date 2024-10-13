@@ -12,7 +12,7 @@ from NTdatasets.sensory_base import SensoryBase
 
 class binocular_single(SensoryBase):
 
-    def __init__(self, expt_num=None, time_embed=0, num_lags=12, skip_lags=0, **kwargs):
+    def __init__(self, expt_num=None, time_embed=0, num_lags=12, skip_lags=0, verbose=True, **kwargs):
         """
         Args: 
             expt_num: the experiment index
@@ -37,7 +37,9 @@ class binocular_single(SensoryBase):
             filename, 
             num_lags=num_lags, time_embed=time_embed,
             **kwargs)
-        print( "Loading", self.datadir + filename)
+
+        if verbose:
+            print( "Loading", self.datadir + filename)
 
         # Store stimulus trimmed to 36 - 36 binocular configuration
         stim_trim = np.concatenate( (np.arange(3,39), np.arange(45,81)))
@@ -123,12 +125,14 @@ class binocular_single(SensoryBase):
             for cc in range(self.numSUs):
                 rep_inds.append( np.add(Bmatdat['rep_inds'][0][cc], -1) ) 
         self.rep_inds = rep_inds
-        print( "Expt %d: %d SUs, %d total units, %d out of %d time points used."%(expt_num, self.numSUs, self.NC, len(used_inds), self.NT))
 
-        self.prepare_stim( time_embed=time_embed, skip_lags=skip_lags, num_lags=num_lags)
+        if verbose:
+            print( "Expt %d: %d SUs, %d total units, %d out of %d time points used."%(expt_num, self.numSUs, self.NC, len(used_inds), self.NT))
+
+        self.prepare_stim( time_embed=time_embed, skip_lags=skip_lags, num_lags=num_lags, verbose=verbose)
     # END binocular_single.__init__
 
-    def prepare_stim( self, time_embed=0, skip_lags=None, num_lags=None ):
+    def prepare_stim( self, time_embed=0, skip_lags=None, num_lags=None, verbose=True ):
         """
         Prepare stimulus for dataset.
 
@@ -158,7 +162,7 @@ class binocular_single(SensoryBase):
             if num_lags is None:
                 # then read from dataset (already set):
                 num_lags = self.num_lags
-            self.stim = self.time_embedding( stim=stim, nlags=num_lags )
+            self.stim = self.time_embedding( stim=stim, nlags=num_lags, verbose=verbose )
             # This will return a torch-tensor
             self.stim_dims[3] = num_lags
     # END binocular_single.prepare_stim()
