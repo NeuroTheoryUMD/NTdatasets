@@ -278,7 +278,7 @@ class SensoryBase(Dataset):
             dtype=torch.float32)
     # END SenspryBase.construct_drift_design_matrix()
 
-    def trial_psths( self, trials=None, R=None, trial_size=None, verbose=False ):
+    def trial_psths( self, trials=None, R=None, trial_size=None, ignore_dfs=True, verbose=False ):
         """
         Computes average firing rate of cells_out at bin-resolution, averaged across trials
         given in block_inds
@@ -287,6 +287,7 @@ class SensoryBase(Dataset):
             trials: the trials to compute the PSTHs for
             R: the firing rates to use
             trial_size: the size of the trials
+            ignore_dfs: whether or not dfs should be ignored when computing PSTH (default True)
             verbose: whether to print out the trial sizes
 
         Returns:
@@ -307,7 +308,7 @@ class SensoryBase(Dataset):
             R = R[:, None]         
         num_psths = R.shape[1]  # otherwise use existing input
 
-        if R.shape[1] == len(ccs):
+        if (R.shape[1] == len(ccs)) and not ignore_dfs:
             dfs = self.dfs[:, ccs].detach().numpy()
         else:
             if verbose:
