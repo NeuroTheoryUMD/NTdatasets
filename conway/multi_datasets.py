@@ -46,6 +46,7 @@ class MultiClouds(SensoryBase):
         eye_config=3,  # 0 = all, 1, 2, and 3 are options (3 = binocular)
         eye_contiguous=True, # whether to only use eye_config data that is contiguous 
         cell_lists = None,
+        test_set = True, # whether to include a test-set in cross-validation
         device=torch.device('cpu')):
         """
         Constructor options
@@ -250,7 +251,7 @@ class MultiClouds(SensoryBase):
         #    self.assemble_saccade_inds()
 
         ### Set up train, val and test inds and blks
-        self.crossval_setup(test_set=True)
+        self.crossval_setup(test_set=test_set)
     # END MultiClouds.__init__
 
     def read_file_info( self, file_n, filename ):
