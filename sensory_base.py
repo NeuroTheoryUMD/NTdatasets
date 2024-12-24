@@ -696,17 +696,25 @@ class SensoryBase(Dataset):
         Returns:
             None
         """
-        Ntr = len(self.block_inds)
-
+        if len(self.block_inds) > 0: # will use time points rather than trials if no trial structure in dataset
+            Ntr = len(self.block_inds)
+        else:
+            Ntr = self.NT
+            print('  Warning: speckled is on time-point basis')
+        
         # Choose trials to leave out for each unit
         self.Mval = torch.zeros(self.dfs.shape, dtype=torch.float32)
         self.Mtrn = torch.ones(self.dfs.shape, dtype=torch.float32)
         for cc in range(self.NC):
             ival,_ = self.fold_sample( 
                 Ntr, folds=folds, random_gen=random_gen, which_fold=cc%folds)
-            for tr in ival:
-                self.Mval[self.block_inds[tr], cc] = 1.0
-                self.Mtrn[self.block_inds[tr], cc] = 0.0
+            if len(self.block_inds) == 0:
+                self.Mval[ival, cc] = 1.0
+                self.Mtrn[ival, cc] = 0.0
+            else:
+                for tr in ival:
+                    self.Mval[self.block_inds[tr], cc] = 1.0
+                    self.Mtrn[self.block_inds[tr], cc] = 0.0
         if self.cells_out is not None:
             self.Mtrn_out = deepcopy(self.Mtrn[:, self.cells_out])
             self.Mval_out = deepcopy(self.Mval[:, self.cells_out])
