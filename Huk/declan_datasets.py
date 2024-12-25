@@ -11,30 +11,42 @@ from NTdatasets.sensory_base import SensoryBase
 
 class DeclanSampleData(SensoryBase):
     """
-    DeclanSampleData is a class for handling whisker data from the lab of Scott Pluta.
+    DeclanSampleData is a class for handling trial-level data from running project. This takes the 
+    most basic stimulus (grating direction (12), and 4 spatial/temporal frequency combinations) and
+    spike count on trial level
     """
 
-    def __init__(self, filename=None, combined_stim=False, nspk_cutoff=500, drift_interval=60, **kwargs):
+    def __init__(
+            self, filename=None, datadir='', 
+            combined_stim=False, 
+            nspk_cutoff=500,
+            drift_interval=60,
+            **kwargs):
         """
         Args:
-            filename: duh
+            filename: duh (required)
+            datadir: directory name that data is in: can just lump with filename if want to leave
+            combined_stim: whether to combine direction and frequency info into single one-hot category (def: False)
+            nspk_cutoff: initial quality criteria, not including neurons with less than this number of spikes
+            drift_interval: anchor spacing for drift model
             **kwargs: additional arguments to pass to the parent class
         """
         assert filename is not None, "Must specify filename."
-        # call parent constructor
-        super().__init__(datadir='', filenames=filename, **kwargs)
-        #self.expt_name = expt_name
 
-        matdat = sio.loadmat( filename )
-        robs_raw = matdat['Robs']
-        self.StimDir = matdat['StimDir'].squeeze()
-        self.StimTF = matdat['StimTF'].squeeze()
-        self.StimSF = matdat['StimSF'].squeeze()
-        self.EyeVar = matdat['EyeVar'].squeeze()
-        self.PupilArea = matdat['PupilArea'].squeeze()
-        self.RunSpeed = matdat['RunSpeed'].squeeze()
-        self.SacMag = matdat['SacMag'].squeeze()
-        self.SacRate = matdat['SacRate'].squeeze()
+        # call parent constructor -- has base-level variables and lots of dataset functions
+        super().__init__(datadir=datadir, filenames=filename, drift_interval=drift_interval, **kwargs)
+
+        # Load data into dataset structure easiest way
+        matdat = sio.loadmat( datadir + filename )
+        robs_raw = matdat['Robs'].astype(np.float32)
+        self.StimDir = matdat['StimDir'].squeeze().astype(np.float32)
+        self.StimTF = matdat['StimTF'].squeeze().astype(np.float32)
+        self.StimSF = matdat['StimSF'].squeeze().astype(np.float32)
+        self.EyeVar = matdat['EyeVar'].squeeze().astype(np.float32)
+        self.PupilArea = matdat['PupilArea'].squeeze().astype(np.float32)
+        self.RunSpeed = matdat['RunSpeed'].squeeze().astype(np.float32)
+        self.SacMag = matdat['SacMag'].squeeze().astype(np.float32)
+        self.SacRate = matdat['SacRate'].squeeze().astype(np.float32)
         
         self.NT = len(self.StimSF)
         self.NC = robs_raw.shape[1]
@@ -49,7 +61,6 @@ class DeclanSampleData(SensoryBase):
 
         self.robs = torch.tensor( robs_raw[:, self.kept_cells], dtype=torch.float32 )
         self.dfs = torch.ones([self.NT, self.NC], dtype=torch.float32)  # currently no datafilters in dataset
-        # Assemble stim
 
         # Assign cross-validation
         Xt = np.arange(2, self.NT, 5, dtype='int64')
@@ -60,17 +71,21 @@ class DeclanSampleData(SensoryBase):
 
         ##### Additional Stim processing #####
         self.stimDs = torch.tensor( self.construct_onehot_design_matrix(self.StimDir), dtype=torch.float32 )
+        NDIR = self.stimDs.shape[1]
+        
         binTF = np.log2(self.StimTF).astype(int)
         binSF = (self.StimSF-1).astype(int)
         Fcat = binSF*3 + binTF  # note this give 0 1 4 5
         Fcat[Fcat > 2] += -2  # now categories 0 1 (SF=0, TF=0,1) and 2 3 (SF=1, TF=1,2)
         self.stimFs = torch.tensor( self.construct_onehot_design_matrix(Fcat), dtype=torch.float32 )
+        NFS = self.stimFs.shape[1]
+
         if combined_stim:
             self.stim = torch.einsum('ta,tb->tab', self.stimFs, self.stimDs ).reshape([-1, 48])
-            self.stim_dims = [4, 12, 1, 1]  # put directions in space
+            self.stim_dims = [NFS, NDIR, 1, 1]  # put directions in space
         else:
             self.stim = self.stimDs
-            self.stim_dims = [1, self.stim.shape[1], 1, 1]  # put directions in space
+            self.stim_dims = [1, NDIR, 1, 1]  # put directions in space
 
         # Make drift matrix
         drift_anchors = np.arange(0, self.NT, drift_interval)
@@ -107,9 +122,6 @@ class DeclanSampleData(SensoryBase):
             
         if self.Xdrift is not None:
             out['Xdrift'] = self.Xdrift[idx, :]
-
-        if self.ACinput is not None:
-            out['ACinput'] = self.ACinput[idx, :]
 
         if len(self.covariates) > 0:
             self.append_covariates( out, idx)
