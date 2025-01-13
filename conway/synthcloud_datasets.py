@@ -10,28 +10,66 @@ class SimCloudData(Dataset):
     Data set for simulted cloud data. It is assumed that the data has already been compiled as an HDF5 file.
     """
     def __init__(self,
-        file_name,
+        file_name='data/cloud_data_stim_dim120_robs_sqrad_0.3.hdf5' ,
         block_len=1000,
         down_sample=None,
         num_lags=12,
-        cell_idx=None):
+        cell_type_list=None):
         """
         Args:
             file_name: Name of the HDF5 file to be used as a string.
             block_len: Number of time points in each block. Must be a multiple of the total number of time points. (Defalut 1000)
             down_sample: How much to down sample the stim. If down_sample=2 and stim is of dimension LxL brings down to L/2xL/2. (Default 2)
             num_lags: How many time points to lag by. (Default 12)
-            cell_idx: Index of cells to use as list. (Default None)
+            cell_type_list: List of cells to use. All posible cell types are ['X_OFF', 'X_ON', 'V1_Exc_L4', 'V1_Inh_L4', 'V1_Exc_L2/3', 'V1_Inh_L2/3']. Data will be in the order of list.
         """
+        all_cell_type_list = ['X_OFF', 'X_ON', 'V1_Exc_L4', 'V1_Inh_L4', 'V1_Exc_L2/3', 'V1_Inh_L2/3']
         
         with h5py.File(file_name, 'r') as f:
+            x_pos = f['x_pos'][:]
+            cell_key = [str(f['cell_key'][:][i], encoding='utf-8') for i in range(x_pos.shape[0])]
+
+        # Cell key and index
+        if cell_type_list is None:
+            print("No cell types were chosen. Will use all cells as defalut including LGN.")
+            cell_type_list = all_cell_type_list
+            cell_idx = [i for i in range(len(cell_key))]
+        else:
+            cell_idx = []
+            aux_cell_key = []
+            for cell in cell_type_list:
+                assert cell in all_cell_type_list, "This cell type is not in the data set. Please choose from ['X_OFF', 'X_ON', 'V1_Exc_L4', 'V1_Inh_L4', 'V1_Exc_L2/3', 'V1_Inh_L2/3']"
+                idx = [i for i, val in enumerate(cell_key) if val == cell]
+                cell_idx += idx
+                aux_cell_key += [cell]*len(idx)
+            cell_key = aux_cell_key
+        
+        # index for each cell type in data
+        self.cell_idx_dict = {}
+        for cell in cell_type_list:
+            self.cell_idx_dict[cell] = [i for i, val in enumerate(cell_key) if val == cell]
+            
+        self.NC = len(cell_idx)
+        self.cell_type_list = cell_type_list
+        self.cell_key = cell_key
+
+        # Load data from HDF5 file
+        with h5py.File(file_name, 'r') as f:
+            x_pos = f['x_pos'][cell_idx]
+            y_pos = f['y_pos'][cell_idx]
             init_stim = f['stim'][:]
-            if cell_idx is None:
-                self.robs = f['robs'][:]
-            else:
-                self.robs = f['robs'][:][:,cell_idx]
+            self.robs = f['robs'][:][:,cell_idx]
             file_start_pos = list(f['file_start_pos'][:])
 
+        # Load orientation info
+        ori_dict = np.load('data/V1_neuron_orientation_in_deg_and_orientation_selection_sqrad_0.3_GQM.pkl', allow_pickle=True)
+        self.thetas = {}
+        for cell in self.cell_type_list:
+            if cell == 'X_OFF' or cell == 'X_ON':
+                continue
+            else:
+                self.thetas[cell] = ori_dict['thetas'][cell]
+                
         self.trial_sample = True
         
         self.block_len = block_len   # block length
