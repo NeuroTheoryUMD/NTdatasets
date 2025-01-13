@@ -1297,7 +1297,7 @@ def clone_path_prepare_data(ee, cc, TB, nlags=12, clone_model=None, num_clones=N
     #data_clone = binocular_single( expt_num=ee+1, datadir=datadir, time_embed=2, skip_lags=1, num_lags=old_nlags )
     data_clone = binocular_single( expt_num=ee, datadir=datadir, time_embed=2, skip_lags=1, num_lags=old_nlags )
     if nlags is not None:
-        data1 = binocular_single( expt_num=ee, datadir=datadir, time_embed=2, skip_lags=1, num_lags=nlag, verbose=False )
+        data1 = binocular_single( expt_num=ee, datadir=datadir, time_embed=2, skip_lags=1, num_lags=nlags, verbose=False )
     else:
         data1 = binocular_single( expt_num=ee, datadir=datadir, time_embed=2, skip_lags=1, num_lags=old_nlags, verbose=False )
         
