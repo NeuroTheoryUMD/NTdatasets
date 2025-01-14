@@ -1,27 +1,29 @@
 import torch
 import h5py
 import numpy as np
+import NDNT.utils as utils
 from torch.utils.data import Dataset
-from ColorDataUtils.simproj_utils import downsample_stim
+from ColorDataUtils.simproj_utils import downsample_stim, deg2pxl
 from NTdatasets.sensory_base import SensoryBase
 
 class SimCloudData(Dataset):
     """
     Data set for simulted cloud data. It is assumed that the data has already been compiled as an HDF5 file.
+    WARNING: Orientation info only for cloud_data_stim_dim120_robs_sqrad_0.3.hdf5 data
     """
     def __init__(self,
-        file_name='data/cloud_data_stim_dim120_robs_sqrad_0.3.hdf5' ,
+        file_name='data/cloud_data_stim_dim120_robs_sqrad_0.3.hdf5',
+        cell_type_list=None,
         block_len=1000,
         down_sample=None,
-        num_lags=12,
-        cell_type_list=None):
+        num_lags=12):
         """
         Args:
             file_name: Name of the HDF5 file to be used as a string.
+            cell_type_list: List of cells to use. All posible cell types are ['X_OFF', 'X_ON', 'V1_Exc_L4', 'V1_Inh_L4', 'V1_Exc_L2/3', 'V1_Inh_L2/3']. Data will be in the order of list.
             block_len: Number of time points in each block. Must be a multiple of the total number of time points. (Defalut 1000)
             down_sample: How much to down sample the stim. If down_sample=2 and stim is of dimension LxL brings down to L/2xL/2. (Default 2)
             num_lags: How many time points to lag by. (Default 12)
-            cell_type_list: List of cells to use. All posible cell types are ['X_OFF', 'X_ON', 'V1_Exc_L4', 'V1_Inh_L4', 'V1_Exc_L2/3', 'V1_Inh_L2/3']. Data will be in the order of list.
         """
         all_cell_type_list = ['X_OFF', 'X_ON', 'V1_Exc_L4', 'V1_Inh_L4', 'V1_Exc_L2/3', 'V1_Inh_L2/3']
         
@@ -49,9 +51,9 @@ class SimCloudData(Dataset):
         for cell in cell_type_list:
             self.cell_idx_dict[cell] = [i for i, val in enumerate(cell_key) if val == cell]
             
-        self.NC = len(cell_idx)
-        self.cell_type_list = cell_type_list
-        self.cell_key = cell_key
+        self.NC = len(cell_idx) # total numbe of cells
+        self.cell_type_list = cell_type_list # list of cells in order
+        self.cell_key = cell_key # cell type key as list
 
         # Load data from HDF5 file
         with h5py.File(file_name, 'r') as f:
@@ -75,7 +77,8 @@ class SimCloudData(Dataset):
         self.block_len = block_len   # block length
         self.NT = init_stim.shape[0] # number of time points
         assert self.NT%self.block_len == 0, "Number of time points is not divisible by "+str(self.block_len)
-        
+
+        # Downsample stim
         if down_sample is not None:
             orig_L = int(np.sqrt(init_stim.shape[1]))
             L = orig_L//down_sample
@@ -100,6 +103,10 @@ class SimCloudData(Dataset):
         for i in range(len(file_start_pos)):
             j = file_start_pos[i]
             self.dfs[j:j+self.num_lags,:] = 0
+
+        # Generate mu0 values from RF positions
+        pxl_x_pos, pxl_y_pos = deg2pxl(x_pos, y_pos, L, down_sample=down_sample)
+        self.mu0s = utils.pixel2grid(np.stack((pxl_x_pos,pxl_y_pos),axis=1), L=L)
 
     def __len__(self):
         return self.stim.shape[0]
