@@ -14,6 +14,38 @@ from NTdatasets.sensory_base import SensoryBase
 from NTdatasets.generic import GenericDataset
 
 
+class MultiData( MultiClouds ):
+    """
+    Shell built on top of multi-cloud that adds automatic (and manual) data updates
+    """
+
+    def __init__(self,
+        expt_list,
+        datadir, 
+        num_lags=10, 
+        include_MUs=False,
+        drift_interval=None,
+        #trial_sample=True,
+        luminance_only=True,
+        LMS=False,
+        binocular=False, # whether to include separate filters for each eye
+        eye_config=3,  # 0 = all, 1, 2, and 3 are options (3 = binocular)
+        eye_contiguous=True, # whether to only use eye_config data that is contiguous 
+        #cell_lists = None,
+        test_set = True, # whether to include a test-set in cross-validation
+        device=torch.device('cpu')):
+
+        super().__init__(
+                filenames=expt_list, datadir=datadir, num_lags=num_lags,
+                include_MUs=include_MUs, drift_interval=drift_interval,
+                trial_sample=True, luminance_only=luminance_only, LMS=LMS,
+                binocular=binocular, eye_config=eye_config, eye_contiguous=eye_contiguous, # whether to only use eye_config data that is contiguous 
+                cell_lists = None, test_set=test_set, device=device )
+        
+        # Build automatic file-read given expt_list        
+    # END MultiData.__init__()            
+            
+
 class MultiClouds(SensoryBase):
     """
     -- can load batches from multiple datasets
