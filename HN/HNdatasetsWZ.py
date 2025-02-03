@@ -42,6 +42,8 @@ class HNdataset(SensoryBase):
     def __init__(
         self, filename=None, #which_stim="left", skip_lags=2, # no longer intializes stim here
         pad_length=None, # if filled in, will automatically pad (but can be done later)
+        mask_lags=0,
+        num_lags=10,
         **kwargs
     ):
         """
@@ -52,12 +54,13 @@ class HNdataset(SensoryBase):
             **kwargs: non-dataset specific arguments that get passed into SensoryBase
         """
         # call parent constructor
-        super().__init__(filename, **kwargs)
+        super().__init__(filename, num_lags=num_lags, **kwargs)
 
         print(self.datadir + filename)
         matdat = sio.loadmat(self.datadir + filename)
         print("Loaded " + filename)
 
+        self.mask_lags=mask_lags
         self.disp_list = matdat["disp_list"].squeeze()
         self.stimlist = np.unique(matdat["stimL"])
         self.Nstim = len(self.stimlist)
@@ -110,7 +113,7 @@ class HNdataset(SensoryBase):
         self.Nframes = np.min(np.diff(blks))
         for bb in range(self.Ntr):
             self.block_inds.append( np.arange(blks[bb, 0]-1, blks[bb, 1], dtype=np.int64) )
-            self.dfs[np.arange(blks[bb,0]-1, blks[bb,0]+self.num_lags-1), :] = 0.0
+            self.dfs[np.arange(blks[bb,0]-1, blks[bb,0]+self.mask_lags-1), :] = 0.0
             # Take out the first num_lags part of each data-filter
             #!! Here
         # self.dfs[np.arange(blks[bb,0]-1, blks[bb,0]+np.maximum(10,self.num_lags+1)), :] = 0.0
@@ -262,6 +265,11 @@ class HNdataset(SensoryBase):
     # END HNdataset.assing_train_test_inds()
 
     # new! (added by WZ)
+    def mask_dfs(self, mask_length):
+        '''Masks initial number of tp of each trial by setting
+        dfs to 0'''
+        for t in range(len(self.block_inds)):
+            self.dfs[self.block_inds[t][0:mask_length],:]=0
     def pad_trials(self, pad_length=10):
         '''
         Pads the end of each trial with additional empty timepoints. (could be the end if we want)
