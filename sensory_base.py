@@ -43,7 +43,7 @@ class SensoryBase(Dataset):
             filenames: the filenames to use
             datadir: the data directory
             trial_sample: whether to sample trials
-            num_lags: the number of lags to use
+            num_lags: the number of lags presumably used by models (stored but not used in SensoryBase)
             time_embed: the time embedding to use
             include_MUs: whether to include MUs
             drift_interval: the drift interval to use

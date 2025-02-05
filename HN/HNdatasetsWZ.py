@@ -42,7 +42,7 @@ class HNdataset(SensoryBase):
     def __init__(
         self, filename=None, #which_stim="left", skip_lags=2, # no longer intializes stim here
         pad_length=None, # if filled in, will automatically pad (but can be done later)
-        mask_lags=0,
+        mask_lags=4,
         num_lags=10,
         **kwargs
     ):
@@ -60,7 +60,7 @@ class HNdataset(SensoryBase):
         matdat = sio.loadmat(self.datadir + filename)
         print("Loaded " + filename)
 
-        self.mask_lags=mask_lags
+        self.mask_lags = mask_lags
         self.disp_list = matdat["disp_list"].squeeze()
         self.stimlist = np.unique(matdat["stimL"])
         self.Nstim = len(self.stimlist)
@@ -615,6 +615,8 @@ class HNdataset(SensoryBase):
         if num_lags is None:
             # then read from dataset (already set):
             num_lags = self.num_lags
+        else:
+            self.num_lags = num_lags
 
         self.sac = self.time_embedding(stim=stim, nlags=num_lags)
         self.sac_dims[3] = num_lags
@@ -623,7 +625,7 @@ class HNdataset(SensoryBase):
     # END HNdata.assemble_stim()
 
     ###### DAN RECENT ADD #########
-    def design_matrix_attentuation( self, num_segs=10):
+    def design_matrix_attentuation( self, num_segs=8):
         """
         blksI is the data.block_inds information.
         num_segs says how many tent_bases should be used across trial
@@ -643,7 +645,7 @@ class HNdataset(SensoryBase):
         #Tseg = np.mean(L * (1 - onset_period) / num_segs).astype(int)
 
         ## SQRT-spacing
-        anchors = np.round(self.num_lags + np.linspace(0,np.sqrt(L-self.num_lags),num_segs+1)**2).astype(int)[:-1]
+        anchors = np.round(self.mask_lags + np.linspace(0,np.sqrt(L-self.mask_lags),num_segs+1)**2).astype(int)[:-1]
         print('Anchors:', anchors)
         #anchors = np.concatenate(
         #    (
