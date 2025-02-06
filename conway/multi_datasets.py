@@ -14,7 +14,7 @@ from NTdatasets.sensory_base import SensoryBase
 from NTdatasets.generic import GenericDataset
 
 
-class MultiData( MultiClouds ):
+class MultiData( SensoryBase ):
     """
     Shell built on top of multi-cloud that adds automatic (and manual) data updates
     """
@@ -44,7 +44,9 @@ class MultiData( MultiClouds ):
         
         # Build automatic file-read given expt_list        
     # END MultiData.__init__()            
-            
+    def forward(self, x):
+        return x
+    
 
 class MultiClouds(SensoryBase):
     """
