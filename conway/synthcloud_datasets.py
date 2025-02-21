@@ -12,7 +12,7 @@ class SimCloudData(Dataset):
     WARNING: Orientation info only for cloud_data_stim_dim120_robs_sqrad_0.3.hdf5 data
     """
     def __init__(self,
-        file_name='home/ifernand/Cloud_SynthData_Proj/data/cloud_data_stim_dim120_spike_time_sqrad_0.3.hdf5',
+        file_name='/home/ifernand/Cloud_SynthData_Proj/data/cloud_data_stim_dim120_spike_time_sqrad_0.3.hdf5',
         cell_type_list=None,
         block_len=1000,
         res_frac=1,
