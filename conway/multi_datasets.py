@@ -507,6 +507,85 @@ class MultiClouds(SensoryBase):
         self.crossval_setup()
     # END MultiClouds.modify_expt_time_range()
 
+    def expt_membership(self, ccs):
+        """
+        This takes a set of cells and returns a map from expt to cells,
+        specific to multi-experiment structures of Conway data
+
+        Args:
+            ccs: the cells to fit readouts for
+
+        Returns:
+            expt_to_ccs: list (one entry per experiment) of the cell
+        """
+        if not isinstance(ccs, np.ndarray):
+            if not isinstance(ccs, list):
+                ccs = [ccs]
+            ccs = np.array( ccs, dtype=int)
+
+        # make a map from expt to cells
+        expt_NCs = [0] + list(np.cumsum(self.exptNC))
+        expt_to_ccs = [[]]*len(self.exptNC)
+        for ei in range(len(expt_NCs)-1):
+                expt_to_ccs[ei] = deepcopy(list(ccs[np.where( (ccs >= expt_NCs[ei]) & (ccs < expt_NCs[ei+1]) )[0]]))
+        return expt_to_ccs
+    # END multi_datasets.expt_membership()
+
+    def update_drift_terms( self, model=None, drift_terms=None, cell_list=None, dnet=None ):
+        """
+        Updates larger model with drift term of specific cell. This is easy unless there
+        are multiple experiments, where this comes in handy. This will automatically identify
+        the network with the drift terms. Note: is modifies existing model rather than making a new one.
+
+        Args:
+            model: model with the drift term to be modified
+            drift_terms: what the drift terms should be 
+            cell_list: list of cells corresponding to drift term
+
+        Returns:
+            Nothing
+        """
+
+        assert model is not None, "Need model"
+        assert drift_terms is not None, "Forgot to add the drift terms"
+        
+        if cell_list is None: 
+            cell_list = np.arange(self.NC)
+        else: 
+            cell_list = np.array( cell_list, dtype=int)
+    
+        if len(drift_terms.shape) == 1:
+            drift_terms = drift_terms[:, None]
+        NCupdate = drift_terms.shape[1]
+        assert NCupdate == len(cell_list), "length of cell_list does not match size of drift_terms"
+        
+        # Find drift network
+        if dnet is None:
+            dnet = -1
+            for ii in range(len(model.networks)):
+                if model.networks[ii].xstim_n == 'Xdrift':
+                    dnet = ii
+            assert dnet >= 0, "Could not find matching drift network"
+        else:
+            assert model.networks[dnet].xstim_n == 'Xdrift', "Does not appear to be drift network"
+
+        num_expts = len(self.exptNC)
+        if num_expts == 1:
+            model.networks[dnet].layers[0].weight.data[:, cell_list] = deepcopy(drift_terms)
+            return
+        
+        # Figure out which experiment each cell is in, and go through 4        
+        cell_parse = self.expt_membership(cell_list)
+        NAranges = [0] + list(np.cumsum(self.exptNA))
+        dr_counter = 0
+        for ee in range(num_expts):
+            NCE = len(cell_parse[ee])
+            ts = range(NAranges[ee], NAranges[ee+1])        
+            for ii in range(NCE):
+                model.networks[dnet].layers[0].weight.data[ts, cell_parse[ee][ii]] = drift_terms[:, dr_counter].clone()
+                dr_counter += 1
+    # END MultiClouds.update_drift_terms
+
     def generate_array_cell_list(self, expt_n=0, which_array=0):
         """
         Formula for generating cell list given channel maps and basic eligibility
@@ -768,8 +847,11 @@ class MultiClouds(SensoryBase):
         """
 
         #eyepos = shifts   # shifts that is passed in is actually the eye position
+        if self.Nexpts == 1:
+            expt_n = 0
+        else:
+            assert expt_n is not None, "BUILD_STIM: must specify expt_n"
 
-        assert expt_n is not None, "BUILD_STIM: must specify expt_n"
         if self.file_info[expt_n]['stim_location_deltas'] is not None:
             assert np.sum(abs(self.file_info[expt_n]['stim_location_deltas'])) == 0, "BUILD_STIM: There are stim-deltas but not implemented yet."
         # Delete existing stim and clear cache to prevent memory issues on GPU
@@ -831,10 +913,18 @@ class MultiClouds(SensoryBase):
                 if L is None:
                     L = self.L
                 assert L is not None, "Need to specify stimulus size"
-                if self.L is not None:
-                    assert L == self.L, "BUILD_STIM: size of stimuli much match. L=%d"%self.L 
+                #if self.L is not None:
+                #    if self.Nexpts == 1:
+                #        print('BUILD_STIM: changing L')
+                #        self.L = L
+                #        self.stim_dims[1] = L
+                #        self.stim_dims[2] = L
+                #    else:
+                #        assert L == self.L, "BUILD_STIM: size of stimuli much match. L=%d"%self.L 
 
                 stim_pos = [top_corner[0], top_corner[1], top_corner[0]+L, top_corner[1]+L]
+
+            self.L = L
 
             if eyepos is not None:
                 need2crop = True
@@ -930,6 +1020,7 @@ class MultiClouds(SensoryBase):
             #stim = torch.tensor( newstim, dtype=torch.float32, device=self.device )
         # Note stim stored in numpy is being represented as full 3-d + 1 tensor (time, channels, NX, NY)
 
+        self.stim_pos = deepcopy(stim_pos)
         # Insert fixation point
         if (fixdot is not None) and self.is_fixpoint_present( stim_pos, expt_n ):
             fixranges = [None, None]
@@ -982,14 +1073,15 @@ class MultiClouds(SensoryBase):
             L = newstim.shape[2]
 
         # Verify L matches current stim's L
-        if self.L is not None:
-            assert L == self.L, "BUILD_STIM: L mismatch (which_stim)"
-        self.L = L
+        #print(self.L)
+        #if self.L is not None:
+        #    assert L == self.L, "BUILD_STIM: L mismatch (which_stim)"
+        #self.L = L
 
-        if self.time_embed is None:
-            self.time_embed = time_embed
-        else:
-            assert self.time_embed == time_embed, "time_embed setting must match"
+        #if self.time_embed is None:
+        self.time_embed = time_embed
+        #else:
+        #    assert self.time_embed == time_embed, "time_embed setting must match"
             
         if time_embed > 0:
             #self.stim_dims[3] = num_lags  # this is set by time-embedding
@@ -1033,28 +1125,28 @@ class MultiClouds(SensoryBase):
         print( "Stimulus assembly complete")
     # END MultiClouds.assemble_stimulus()
 
-    def time_embedding( self, stim=None, nlags=None ):
-        """
-        Note this overloads SensoryBase because reshapes in full dimensions to handle folded_lags
+    #def time_embedding( self, stim=None, nlags=None ):
+    #    """
+    #    Note this overloads SensoryBase because reshapes in full dimensions to handle folded_lags
         
-        Args:
-            stim (np.array): stimulus to time-embed
-            nlags (int): number of lags
+    #    Args:
+    #        stim (np.array): stimulus to time-embed
+    #        nlags (int): number of lags
 
-        Returns:
-            np.array: time-embedded stimulus
-        """
-        assert self.stim_dims is not None, "Need to assemble stim before time-embedding."
+    #    Returns:
+    #        np.array: time-embedded stimulus
+    #    """
+    #    assert self.stim_dims is not None, "Need to assemble stim before time-embedding."
 
-        if nlags is None:
-            nlags = self.num_lags
+    #    if nlags is None:
+    #        nlags = self.num_lags
         #if self.stim_dims[3] == 1:
         #    self.stim_dims[3] = nlags
         #if stim is None:
         #    tmp_stim = deepcopy(self.stim)
     
-        NT = stim.shape[0]
-        print("  Time embedding...")
+    #    NT = stim.shape[0]
+    #    print("  Time embedding...")
         #if len(tmp_stim.shape) == 2:
         #    print( "Time embed: reshaping stimulus ->", self.stim_dims)
         #    tmp_stim = tmp_stim.reshape([NT] + self.stim_dims)
@@ -1062,7 +1154,7 @@ class MultiClouds(SensoryBase):
         #assert self.NT == NT, "TIME EMBEDDING: stim length mismatch"
 
         #tmp_stim = tmp_stim[np.arange(NT)[:,None]-np.arange(nlags), :, :, :]
-        tmp_stim = tmp_stim[np.arange(NT)[:,None]-np.arange(nlags), :]
+    #    tmp_stim = tmp_stim[np.arange(NT)[:,None]-np.arange(nlags), :]
         #if self.folded_lags:
         #    #tmp_stim = np.transpose( tmp_stim, axes=[0,2,1,3,4] ) 
         #    tmp_stim = torch.permute( tmp_stim, (0,2,1,3,4) ) 
@@ -1070,8 +1162,8 @@ class MultiClouds(SensoryBase):
         #else:
         #    #tmp_stim = np.transpose( tmp_stim, axes=[0,2,3,4,1] )
         #    tmp_stim = torch.permute( tmp_stim, (0,2,3,4,1) )
-        tmp_stim = torch.permute( tmp_stim, (0,2,1) )
-        return tmp_stim
+    #    tmp_stim = torch.permute( tmp_stim, (0,2,1) )
+    #    return tmp_stim
     # END .time_embedding()
 
     @staticmethod
@@ -1304,9 +1396,61 @@ class MultiClouds(SensoryBase):
             return None
     # END .avrates()
 
-    #def set_cells(self, **kwargs):
-    #    raise( Exception('set_cells does not work with MultiClouds.') )
-    # USE SENSORY-BASE -- should be set up now....
+    def compute_LLsNULL( 
+            self, drift_terms=None, val_inds=None, Dreg=0.1, return_model=False ):
+        """
+        This should be moved to SensoryBase as soon as it works
+        Assembles models based on the drift terms and evaluates. If no drift terms are 
+        passed in, it will first fit and then evaluate. Note that it uses all data to fit the 
+        drift model, but only data_inds to evaluate for the LLs
+        
+        Args:
+            drift_terms: the drift terms for all the models: should match the size of Xdrift. 
+                If None (default) then it will first fit the drift models using Dreg value
+            val_inds: inds of data to use for LL calculation. If None (default) will use what is specified in dataset
+            Dreg: drift_regularization to use if fitting models. Will be entered for model, but not used
+            return_model: whether to return model as well as LLs (default=False)
+
+        Returns:
+            LLs: null-likelihood calculated on val_inds
+            models: population drift model, if 'return_model' flag is set
+        """
+        from NDNT.modules.layers import NDNLayer
+        from NDNT.NDN import NDN
+        from NDNT.utils import fit_lbfgs
+        NC = self.NC
+        NT, NA = self.Xdrift.shape
+        if drift_terms is not None:
+            NAd, NCd = drift_terms.shape
+            assert NA == NAd, "Size of drift terms does not match: NA %d %d"%(NA, NAd)
+            assert NC == NCd, "Size of drift terms does not match: NC %d %d"%(NC, NCd)
+
+        if val_inds is None:
+            if self.trial_sample:
+                val_inds = self.val_blks
+            else:
+                val_inds = self.val_inds
+            
+        # drift network
+        drift_pars = NDNLayer.layer_dict( 
+            input_dims=[1,1,1,NA], num_filters=NC, bias=False, norm_type=0, NLtype='softplus',
+            reg_vals={'d2t': Dreg, 'bcs':{'d2t':0}} )
+        #drift_net = FFnetwork.ffnet_dict( xstim_n = 'Xdrift', layer_list = [drift_pars1] )
+
+        drift_pop = NDN( layer_list = [drift_pars], loss_type='poisson' )
+        drift_pop.networks[0].xstim_n = 'Xdrift'
+
+        if drift_terms is None:
+            fit_lbfgs( drift_pop, self[:], verbose=False)
+        else:
+            drift_pop.networks[0].layers[0].weight.data = torch.tensor( drift_terms, dtype=torch.float32)
+
+        LLs = drift_pop.eval_models(self[val_inds], null_adjusted=False)
+        if return_model:
+            return LLs, drift_pop
+        else:
+            return LLs
+    # END MultiClouds.compute_LLsNULL
 
     def shift_stim_oldstyle(
         self, stim=None, pos_shifts=None, metrics=None, metric_threshold=1, ts_thresh=8, fix_n=None,
