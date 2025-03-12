@@ -14,6 +14,7 @@ class SimCloudData(Dataset):
     def __init__(self,
         file_name='/home/ifernand/Cloud_SynthData_Proj/data/cloud_data_stim_dim120_spike_time_sqrad_0.3.hdf5',
         cell_type_list=None,
+        num_cells=None,
         block_len=1000,
         res_frac=1,
         down_sample=None,
@@ -37,17 +38,29 @@ class SimCloudData(Dataset):
         if cell_type_list is None:
             print("No cell types were chosen. Will use all cells as defalut including LGN.")
             cell_type_list = all_cell_type_list
-            cell_idx = [i for i in range(len(cell_key))]
+            if num_cells is not None:
+                cell_idx = []
+                aux_cell_key = []
+                for cell in cell_type_list:
+                    idx = [i for i, val in enumerate(cell_key) if val == cell][:num_cells]
+                    cell_idx += idx
+                    aux_cell_key += [cell]*len(idx)
+                cell_key = aux_cell_key
+            else:
+                cell_idx = [i for i in range(len(cell_key))]
         else:
             cell_idx = []
             aux_cell_key = []
             for cell in cell_type_list:
                 assert cell in all_cell_type_list, "This cell type is not in the data set. Please choose from ['X_OFF', 'X_ON', 'V1_Exc_L4', 'V1_Inh_L4', 'V1_Exc_L2/3', 'V1_Inh_L2/3']"
-                idx = [i for i, val in enumerate(cell_key) if val == cell]
+                if num_cells is not None:
+                    idx = [i for i, val in enumerate(cell_key) if val == cell][:num_cells]
+                else:
+                    idx = [i for i, val in enumerate(cell_key) if val == cell]
                 cell_idx += idx
                 aux_cell_key += [cell]*len(idx)
             cell_key = aux_cell_key
-        
+            
         # index for each cell type in data
         self.cell_idx_dict = {}
         for cell in cell_type_list:
@@ -60,8 +73,8 @@ class SimCloudData(Dataset):
 
         # Load data from HDF5 file
         with h5py.File(file_name, 'r') as f:
-            x_pos = f['x_pos'][cell_idx]
-            y_pos = f['y_pos'][cell_idx]
+            x_pos = f['x_pos'][:]
+            y_pos = f['y_pos'][:]
             init_stim = f['stim'][:]
             #self.robs = f['robs'][:][:,cell_idx]
             file_start_pos = list(f['file_start_pos'][:])
@@ -69,7 +82,9 @@ class SimCloudData(Dataset):
             for i in range(self.NC):
                 j = cell_idx[i]
                 spike_times.append(f['spike_time_cell_'+str(j)][:])
-
+        x_pos = x_pos[cell_idx]
+        y_pos = y_pos[cell_idx]
+        
         # Compute robs from spike times
         self.NT = int(self.res_frac*init_stim.shape[0]) # number of time points
         robs = np.zeros((self.NT,self.NC)).astype(np.uint8)
@@ -99,7 +114,7 @@ class SimCloudData(Dataset):
             if cell == 'X_OFF' or cell == 'X_ON':
                 continue
             else:
-                self.thetas[cell] = ori_dict['thetas'][cell]
+                self.thetas[cell] = ori_dict['thetas'][cell][:num_cells]
                 
         self.trial_sample = True
         
