@@ -12,7 +12,8 @@ class SimCloudData(Dataset):
     WARNING: Orientation info only for cloud_data_stim_dim120_robs_sqrad_0.3.hdf5 data
     """
     def __init__(self,
-        file_name='/home/ifernand/Cloud_SynthData_Proj/data/cloud_data_stim_dim120_spike_time_sqrad_0.3.hdf5',
+        datadir = '/home/ifernand/Cloud_SynthData_Proj/data/',
+        filename = 'cloud_data_stim_dim120_spike_time_sqrad_0.3.hdf5',
         cell_type_list=None,
         num_cells=None,
         block_len=1000,
@@ -21,7 +22,7 @@ class SimCloudData(Dataset):
         num_lags=12):
         """
         Args:
-            file_name: Name of the HDF5 file to be used as a string.
+            filename: Name of the HDF5 file to be used as a string.
             cell_type_list: List of cells to use. All posible cell types are ['X_OFF', 'X_ON', 'V1_Exc_L4', 'V1_Inh_L4', 'V1_Exc_L2/3', 'V1_Inh_L2/3']. Data will be in the order of list.
             block_len: Number of time points in each block. Must be a multiple of the total number of time points. (Defalut 1000)
             res_frac: Resolution from orig data (Degault 1)
@@ -30,7 +31,7 @@ class SimCloudData(Dataset):
         """
         all_cell_type_list = ['X_OFF', 'X_ON', 'V1_Exc_L4', 'V1_Inh_L4', 'V1_Exc_L2/3', 'V1_Inh_L2/3']
         
-        with h5py.File(file_name, 'r') as f:
+        with h5py.File(datadir+filename, 'r') as f:
             x_pos = f['x_pos'][:]
             cell_key = [str(f['cell_key'][:][i], encoding='utf-8') for i in range(x_pos.shape[0])]
 
@@ -72,7 +73,7 @@ class SimCloudData(Dataset):
         self.res_frac = res_frac
 
         # Load data from HDF5 file
-        with h5py.File(file_name, 'r') as f:
+        with h5py.File(datadir+filename, 'r') as f:
             x_pos = f['x_pos'][:]
             y_pos = f['y_pos'][:]
             init_stim = f['stim'][:]
@@ -102,13 +103,15 @@ class SimCloudData(Dataset):
                 else:
                     trial_NT = int(self.res_frac*(file_start_pos[j+1] - file_start_pos[j]))
                     trial_spike_times = cell_spike_times[trial_idx[j-1]+1:trial_idx[j]]
-                spikes = np.histogram(trial_spike_times, bins=trial_NT, range=(0,int((16/self.res_frac)*trial_NT)))[0].astype(np.uint8)
-                robs[start:start+trial_NT,i] = spikes
+                #spikes = np.histogram(trial_spike_times, bins=trial_NT, range=(0,int((16/self.res_frac)*trial_NT)))[0].astype(np.uint8)
+                #robs[start:start+trial_NT,i] = spikes
+                robs[start:start+trial_NT,i] = np.histogram(
+                    trial_spike_times, bins=np.arange(0,trial_NT+1)*16/self.res_frac)[0].astype(np.uint8)
                 start += trial_NT
         self.robs = robs
 
         # Load orientation info
-        ori_dict = np.load('data/V1_neuron_orientation_in_deg_and_orientation_selection_sqrad_0.3_GQM.pkl', allow_pickle=True)
+        ori_dict = np.load(datadir+'V1_neuron_orientation_in_deg_and_orientation_selection_sqrad_0.3_GQM.pkl', allow_pickle=True)
         self.thetas = {}
         for cell in self.cell_type_list:
             if cell == 'X_OFF' or cell == 'X_ON':

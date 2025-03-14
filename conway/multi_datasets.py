@@ -1397,7 +1397,7 @@ class MultiClouds(SensoryBase):
     # END .avrates()
 
     def compute_LLsNULL( 
-            self, drift_terms=None, val_inds=None, Dreg=0.1, return_model=False ):
+            self, drift_terms=None, val_inds=None, Dreg=0.1, bias_only=False, return_model=False ):
         """
         This should be moved to SensoryBase as soon as it works
         Assembles models based on the drift terms and evaluates. If no drift terms are 
@@ -1409,6 +1409,7 @@ class MultiClouds(SensoryBase):
                 If None (default) then it will first fit the drift models using Dreg value
             val_inds: inds of data to use for LL calculation. If None (default) will use what is specified in dataset
             Dreg: drift_regularization to use if fitting models. Will be entered for model, but not used
+            bias_only: if want to fit the bias but not the drift term itself
             return_model: whether to return model as well as LLs (default=False)
 
         Returns:
@@ -1418,6 +1419,7 @@ class MultiClouds(SensoryBase):
         from NDNT.modules.layers import NDNLayer
         from NDNT.NDN import NDN
         from NDNT.utils import fit_lbfgs
+
         NC = self.NC
         NT, NA = self.Xdrift.shape
         if drift_terms is not None:
@@ -1430,10 +1432,13 @@ class MultiClouds(SensoryBase):
                 val_inds = self.val_blks
             else:
                 val_inds = self.val_inds
-            
+
+        if bias_only:
+            assert drift_terms is not None, "Need to give drift terms if fitting bias-only"
+
         # drift network
         drift_pars = NDNLayer.layer_dict( 
-            input_dims=[1,1,1,NA], num_filters=NC, bias=False, norm_type=0, NLtype='softplus',
+            input_dims=[1,1,1,NA], num_filters=NC, bias=bias_only, norm_type=0, NLtype='softplus',
             reg_vals={'d2t': Dreg, 'bcs':{'d2t':0}} )
         #drift_net = FFnetwork.ffnet_dict( xstim_n = 'Xdrift', layer_list = [drift_pars1] )
 
@@ -1441,10 +1446,12 @@ class MultiClouds(SensoryBase):
         drift_pop.networks[0].xstim_n = 'Xdrift'
 
         if drift_terms is None:
-            fit_lbfgs( drift_pop, self[:], verbose=False)
+            fit_lbfgs( drift_pop, self[:], verbose=False, tolerance_change=1e-10)
         else:
             drift_pop.networks[0].layers[0].weight.data = torch.tensor( drift_terms, dtype=torch.float32)
-
+            if bias_only:
+                drift_pop.set_parameters( val=False, name='weight')
+                fit_lbfgs( drift_pop, self[:], verbose=False, tolerance_change=1e-10)
         LLs = drift_pop.eval_models(self[val_inds], null_adjusted=False)
         if return_model:
             return LLs, drift_pop
