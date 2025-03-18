@@ -81,6 +81,7 @@ class MultiClouds(SensoryBase):
         eye_contiguous=True, # whether to only use eye_config data that is contiguous 
         cell_lists = None,
         test_set = True, # whether to include a test-set in cross-validation
+        auto_update = True,
         device=torch.device('cpu')):
         """
         Constructor options
@@ -97,6 +98,7 @@ class MultiClouds(SensoryBase):
             eye_config (int): which eye configuration to use (0=all, 1=left, 2=right, 3=binocular)
             eye_contiguous (bool): whether to only use contiguous eye configurations
             cell_lists (list): list of lists of cell indices to include in the dataset
+            auto_update (bool): whether to automatically locate and load DFs and ET updates
             device (torch.device): device to store the data on
         """
 
@@ -367,7 +369,12 @@ class MultiClouds(SensoryBase):
         valid_data = np.zeros(NT, dtype=np.uint8)
         valid_data[valid_inds] = 1
 
-
+        # Derive expt-name from filename
+        a = filename.find('_')
+        if a > 0:
+            exptname = filename[:a]
+        else:
+            exptname = filename
         # self.tranges set initially by correct eye config 
         #self.tranges[file_n] = deepcopy(tmap)  
 
@@ -394,7 +401,7 @@ class MultiClouds(SensoryBase):
             # probably have to modify blockIDs -- not done yet
 
         return {
-            'filename': filename,
+            'exptname': exptname,
             'NT': NT,
             'NC': NC,
             #'tmap': tmap, 
