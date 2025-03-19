@@ -263,23 +263,23 @@ class MultiClouds(SensoryBase):
                 self.Xdrift[self.expt_tstart[ff]+np.arange(self.exptNT[ff]), :] = deepcopy(tslice)
                 anchor_count += Xdrift_expts[ff].shape[1]
 
-        print( "  MULTIDATASET %d expts: %d total time steps, %d units"%(self.Nexpts, self.NT, self.NC) )
+        print( "MULTIDATASET %d expts: %d total time steps, %d units"%(self.Nexpts, self.NT, self.NC) )
  
         # Assemble current list of fixations
         self.sacc_inds = [None]*self.Nexpts
         self.stim_shifts = [None]*self.Nexpts
-        to_assemble = True
+        #to_assemble = True
         for ff in range(self.Nexpts):
             sacc_inds = np.array(self.fhandles[ff]['sacc_inds'], dtype=np.int64)
             if len(sacc_inds) < 2: # assume its no good
                 sacc_inds = None
-                to_assemble = False
+                #to_assemble = False
             else:
                 if len(sacc_inds.shape) > 1:
                     sacc_inds[:, 0] += -1  # convert to python so range works
                 else:
                     sacc_inds = None
-                    to_assemble = False
+                    #to_assemble = False
 
             self.sacc_inds[ff] = deepcopy(sacc_inds)
 
@@ -287,7 +287,7 @@ class MultiClouds(SensoryBase):
         #    self.assemble_saccade_inds()
 
         ### Set up train, val and test inds and blks
-        self.crossval_setup(test_set=test_set)
+        self.crossval_setup(test_set=test_set, verbose=True)
     # END MultiClouds.__init__
 
     def read_file_info( self, file_n, filename ):
@@ -628,15 +628,18 @@ class MultiClouds(SensoryBase):
         return val_array
     # END MultiClouds.generate_array_cell_list()
 
-    def assemble_robs(self, reset_dfs=False):
+    def assemble_robs(self):
         """
-        Takes current information (robs and dfs) to make robs and dfs (full version).
+        Takes robs and dfs from each expt-file, and assembles full robs and dfs for whole dataset.
         This uses the info in self.tranges() and squares with the file_info.
         It will also re-generate block_inds
         ** Note this can be replaced by using the spike times explicitly
-        
+
+        Args: 
+            None        
+
         Returns:
-            None
+            None, modifies self.robs and self.dfs directly
         """
 
         self.robs = np.zeros( [self.NT, self.NC], dtype=np.uint8 )
@@ -652,8 +655,6 @@ class MultiClouds(SensoryBase):
             #su_list = self.cranges[ff][self.cranges[ff] < NSUs]
             valid_data = self.file_info[ff]['valid_data']
 
-            # Assume cranges are correct
-             
             # Classify cell-lists in terms of SUs and MUs            
             R_tslice = np.zeros( [NTexpt, self.NC], dtype=np.int64 )
             df_tslice = np.zeros( [NTexpt, self.NC], dtype=np.uint8 )
@@ -931,8 +932,6 @@ class MultiClouds(SensoryBase):
 
                 stim_pos = [top_corner[0], top_corner[1], top_corner[0]+L, top_corner[1]+L]
 
-            self.L = L
-
             if eyepos is not None:
                 need2crop = True
                 # Extend stim window by BUFF-per-side in each direction
@@ -1079,13 +1078,7 @@ class MultiClouds(SensoryBase):
                 newstim = self.crop_stim( newstim, stim_crop )
             L = newstim.shape[2]
 
-        # Verify L matches current stim's L
-        #print(self.L)
-        #if self.L is not None:
-        #    assert L == self.L, "BUILD_STIM: L mismatch (which_stim)"
-        #self.L = L
-
-        #if self.time_embed is None:
+        self.L = L
         self.time_embed = time_embed
         #else:
         #    assert self.time_embed == time_embed, "time_embed setting must match"
@@ -1318,9 +1311,9 @@ class MultiClouds(SensoryBase):
         plt.xlim([x0-BUF,x1+BUF])
         plt.ylim([y0-BUF,y1+BUF])
         plt.show()
-    # END .draw_stim_locations()
+    # END MultiClouds.draw_stim_locations()
     
-    def restrict2good_fixations( self, ETmetrics, expt_n=None, thresh=0.9 ):
+    def fixation_restrict( self, ETmetrics, expt_n=None, thresh=0.9, reset_dfs=True ):
         """
         Modifies data_filters with valid fixation data. For now, would need 
         to re-run assemble_robs. ETmetrics can be for all experiments (if list), or just one
@@ -1332,6 +1325,8 @@ class MultiClouds(SensoryBase):
             expt_n: which experiment to apply metrics to. Will assume all if ETmetrics is a list, or
                 expt 0 if ETmetrics is just a single value
             thresh: metric threshold (between 0.8-1, default=0.9), with lower corresponding to better qual
+            reset_dfs: whether to rebuild DFs from files and then restrict (for example, in case 
+                previous restriction was in place and want to be more permissive)
 
         Returns:
             None, but modifies self.dfs accordingly
@@ -1351,6 +1346,10 @@ class MultiClouds(SensoryBase):
                 if not isinstance(expt_n, list):
                     expt_n = [expt_n]
 
+        if reset_dfs:
+            assert len(expt_n) == self.Nexpts, "Should not reset dfs if not replacing all metrics."
+            self.assemble_robs()
+
         for ii in range(len(expt_n)):
             ee = expt_n[ii]
             assert len(ETmetrics[ii]) == self.exptNT[ee], "ETmetrics is wrong temporal length"
@@ -1360,7 +1359,6 @@ class MultiClouds(SensoryBase):
         
             val_fix = np.zeros([len(trange),1], dtype=np.uint8)
             val_fix[np.where(ETmetrics[ii] <= thresh)[0]] = 1
-
             print( "  Expt #%d: %0.1f percent of data remaining."%(ee, 100*np.sum(val_fix)/len(val_fix)) )
             # Make so that not including small intervals
             val_transitions = np.where(np.diff(val_fix.squeeze()) > 0)[0]
@@ -1395,9 +1393,11 @@ class MultiClouds(SensoryBase):
 
         # Otherwise calculate across all data
         if self.preload:
-            Reff = (self.dfs * self.robs).sum(dim=0).cpu()
-            Teff = self.dfs.sum(dim=0).clamp(min=1e-6).cpu()
-            return (Reff/Teff).detach().numpy()
+            #Reff = (self.dfs * self.robs).sum(dim=0).cpu()
+            Reff = (self.dfs * self.robs).astype(np.float32).sum(axis=0)
+            # Teff = self.dfs.sum(dim=0).clamp(min=1e-6).cpu()
+            Teff = np.maximum(self.dfs.sum(axis=0).astype(np.float32), 1.0)
+            return (Reff/Teff)
         else:
             print('Still need to implement avRs without preloading')
             return None

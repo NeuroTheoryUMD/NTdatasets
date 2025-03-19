@@ -618,7 +618,7 @@ class SensoryBase(Dataset):
             self.test_blks = []
 
         if verbose:
-            print("Partitioned %d fixations total: tr %d, val %d, te %d"
+            print("Partitioned %d blocks total: tr %d, val %d, te %d"
                 %(len(self.test_blks)+len(self.train_blks)+len(self.val_blks),len(self.train_blks), len(self.val_blks), len(self.test_blks)))  
 
         # Now pull indices from each saccade 
