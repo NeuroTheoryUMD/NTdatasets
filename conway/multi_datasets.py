@@ -1404,7 +1404,7 @@ class MultiClouds(SensoryBase):
     # END .avrates()
 
     def compute_LLsNULL( 
-            self, drift_terms=None, val_inds=None, Dreg=0.1, bias_only=False, return_model=False ):
+            self, drift_terms=None, val_inds=None, Dreg=0.1, bias_only=False, to_return=None ):
         """
         This should be moved to SensoryBase as soon as it works
         Assembles models based on the drift terms and evaluates. If no drift terms are 
@@ -1417,7 +1417,7 @@ class MultiClouds(SensoryBase):
             val_inds: inds of data to use for LL calculation. If None (default) will use what is specified in dataset
             Dreg: drift_regularization to use if fitting models. Will be entered for model, but not used
             bias_only: if want to fit the bias but not the drift term itself
-            return_model: whether to return model as well as LLs (default=False)
+            to_return: whether to return additional info than just LLsNULL: can be 'model', or 'weights' or 'ws'
 
         Returns:
             LLs: null-likelihood calculated on val_inds
@@ -1459,10 +1459,19 @@ class MultiClouds(SensoryBase):
             if bias_only:
                 drift_pop.set_parameters( val=False, name='weight')
                 fit_lbfgs( drift_pop, self[:], verbose=False, tolerance_change=1e-10)
+
         LLs = drift_pop.eval_models(self[val_inds], null_adjusted=False)
-        if return_model:
+
+        if to_return is None:
+            return LLs
+        if to_return in ['model', 'mod']:
             return LLs, drift_pop
+        elif to_return in ['ws', 'weights', 'weight']:
+            bs = drift_pop.networks[0].layers[0].bias.detach().cpu().numpy()
+            ws = drift_pop.get_weights() + bs[None, :]
+            return LLs, ws
         else:
+            print("Could not identify 'to_return' argumeent. Can be: 'model', 'weights'" )
             return LLs
     # END MultiClouds.compute_LLsNULL
 
