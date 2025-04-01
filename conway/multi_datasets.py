@@ -16,7 +16,8 @@ from NTdatasets.generic import GenericDataset
 
 class MultiData( SensoryBase ):
     """
-    Shell built on top of multi-cloud that adds automatic (and manual) data updates
+    Shell built on top of multi-cloud that adds automatic (and manual) data updates.
+    FOR FUTURE -- not started
     """
 
     def __init__(self,
