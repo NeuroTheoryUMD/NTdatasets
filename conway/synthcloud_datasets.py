@@ -153,10 +153,13 @@ class SimCloudData(SensoryBase):
         for ii in range(self.NB):
             self.block_inds[ii] = np.arange(ii*self.block_len, (ii+1)*self.block_len)
 
-        self.val_inds = None
-        self.train_inds = None
         self.train_blks = np.arange((self.NB//5)*4, dtype=np.int64)
         self.val_blks = np.arange((self.NB//5)*4, self.NB, dtype=np.int64)
+        Tdivider = (self.NT//self.block_len)*(self.NB//5)*4
+        self.train_inds = np.arange(Tdivider)
+        self.val_inds = np.arange(Tdivider, self.NT)
+        # this would be the best way to do cross-val, but ok with sim
+        #self.crossval_setup(folds=5, random_gen=False, test_set=False, verbose=False)
 
         self.num_lags = num_lags
         self.dfs = np.ones(self.robs.shape)
@@ -167,7 +170,7 @@ class SimCloudData(SensoryBase):
         # Generate mu0 values from RF positions
         pxl_x_pos, pxl_y_pos = deg2pxl(x_pos, y_pos, L, down_sample=down_sample)
         self.mu0s = utils.pixel2grid(np.stack((pxl_x_pos,pxl_y_pos),axis=1), L=L)
-    # END __init__
+    # END SimCloudData.__init__()
 
     def __getitem__(self, index):
         #N_blocks = self.block_inds[index,:].shape[0]

@@ -584,9 +584,9 @@ class SensoryBase(Dataset):
         else:
             print('Still need to implement avRs without preloading')
             return None
-    # END .avrates()
+    # END SensoryBase.avrates()
 
-    def crossval_setup(self, folds=5, random_gen=False, test_set=False, verbose=False):
+    def crossval_setup(self, folds=5, random_gen=False, test_set=False, verbose=False, which_fold=None):
         """
         This sets the cross-validation indices up We can add featuers here. Many ways to do this
         but will stick to some standard for now. It sets the internal indices, which can be read out
@@ -597,6 +597,8 @@ class SensoryBase(Dataset):
             random_gen: whether to pick random fixations for validation or uniformly distributed
             test_set: whether to set aside first an n-fold test set, and then within the rest n-fold train/val sets
             verbose: whether to print out the number of fixations in each set
+            which_fold: if a different fold other than the 'middle' fold should be chosen. Note in the case of
+                a test_set, it specifies the test-set fold, and val_set is not moveable (in this code)
 
         Returns:
             None: sets internal variables test_inds, train_inds, val_inds
@@ -605,7 +607,7 @@ class SensoryBase(Dataset):
 
         # Reflect block structure
         Nblks = len(self.block_inds)
-        val_blk1, tr_blk1 = self.fold_sample(Nblks, folds, random_gen=random_gen)
+        val_blk1, tr_blk1 = self.fold_sample(Nblks, folds, random_gen=random_gen, which_fold=which_fold)
 
         if test_set:
             self.test_blks = val_blk1
