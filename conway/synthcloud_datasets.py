@@ -37,7 +37,7 @@ class SimCloudData(SensoryBase):
 
         super().__init__(
             filenames=[filename], datadir=datadir, num_lags=num_lags,
-            time_embed=0, trial_sample=True)
+            time_embed=0, block_sample=True)
 
         all_cell_type_list = ['X_OFF', 'X_ON', 'V1_Exc_L4', 'V1_Inh_L4', 'V1_Exc_L2/3', 'V1_Inh_L2/3']
         
@@ -316,7 +316,7 @@ class SimCloudDataIF(Dataset):
             else:
                 self.thetas[cell] = ori_dict['thetas'][cell][:num_cells]
                 
-        self.trial_sample = True
+        self.block_sample = True
         
         self.block_len = block_len   # block length
         assert self.NT%self.block_len == 0, "Number of time points is not divisible by "+str(self.block_len)
@@ -451,7 +451,7 @@ class OLD_SimCloudData(Dataset):
             else:
                 self.thetas[cell] = ori_dict['thetas'][cell]
                 
-        self.trial_sample = True
+        self.block_sample = True
         
         self.block_len = block_len   # block length
         self.NT = init_stim.shape[0] # number of time points

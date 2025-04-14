@@ -39,7 +39,7 @@ class MultiData( SensoryBase ):
         super().__init__(
                 filenames=expt_list, datadir=datadir, num_lags=num_lags,
                 include_MUs=include_MUs, drift_interval=drift_interval,
-                trial_sample=True, luminance_only=luminance_only, LMS=LMS,
+                block_sample=True, luminance_only=luminance_only, LMS=LMS,
                 binocular=binocular, eye_config=eye_config, eye_contiguous=eye_contiguous, # whether to only use eye_config data that is contiguous 
                 cell_lists = None, test_set=test_set, device=device )
         
@@ -74,7 +74,7 @@ class MultiClouds(SensoryBase):
         num_lags=10, 
         include_MUs=False,
         drift_interval=None,
-        trial_sample=True,
+        block_sample=True,
         luminance_only=True,
         LMS=False,
         binocular=False, # whether to include separate filters for each eye
@@ -93,7 +93,7 @@ class MultiClouds(SensoryBase):
             num_lags (int): number of lags to include in the stimulus
             include_MUs (bool): whether to include multi-units in the dataset
             drift_interval (int): number of blocks to include in the drift term
-            trial_sample (bool): whether to sample trials for train/val/test
+            block_sample (bool): whether to sample trials for train/val/test
             luminance_only (bool): whether to only include luminance in the stimulus
             binocular (bool): whether to include separate filters for each eye
             eye_config (int): which eye configuration to use (0=all, 1=left, 2=right, 3=binocular)
@@ -106,7 +106,7 @@ class MultiClouds(SensoryBase):
         super().__init__(
             filenames=filenames, datadir=datadir, device=device,
             time_embed=0, num_lags=num_lags, include_MUs=include_MUs, 
-            drift_interval=drift_interval, trial_sample=trial_sample)
+            drift_interval=drift_interval, block_sample=block_sample)
 
         # Done in parent constructor
         #self.datadir = datadir
@@ -1405,7 +1405,8 @@ class MultiClouds(SensoryBase):
     # END .avrates()
 
     def compute_LLsNULL( 
-            self, drift_terms=None, val_inds=None, Dreg=0.1, bias_only=False, to_return=None ):
+            self, drift_terms=None, val_inds=None, Dreg=0.1, bias_only=False, 
+            speckledXV=False, to_return=None ):
         """
         This should be moved to SensoryBase as soon as it works
         Assembles models based on the drift terms and evaluates. If no drift terms are 
@@ -1418,6 +1419,7 @@ class MultiClouds(SensoryBase):
             val_inds: inds of data to use for LL calculation. If None (default) will use what is specified in dataset
             Dreg: drift_regularization to use if fitting models. Will be entered for model, but not used
             bias_only: if want to fit the bias but not the drift term itself
+            speckledXV: whether to use speckled XV (alternative to val_inds: default False)
             to_return: whether to return additional info than just LLsNULL: can be 'model', or 'weights' or 'ws'
 
         Returns:
@@ -1435,11 +1437,14 @@ class MultiClouds(SensoryBase):
             assert NA == NAd, "Size of drift terms does not match: NA %d %d"%(NA, NAd)
             assert NC == NCd, "Size of drift terms does not match: NC %d %d"%(NC, NCd)
 
-        if val_inds is None:
-            if self.trial_sample:
-                val_inds = self.val_blks
-            else:
-                val_inds = self.val_inds
+        if speckledXV:
+            assert val_inds is None, "Should not have val_inds when speckled."
+        else:            
+            if val_inds is None:
+                if self.block_sample:
+                    val_inds = self.val_blks
+                else:
+                    val_inds = self.val_inds
 
         if bias_only:
             assert drift_terms is not None, "Need to give drift terms if fitting bias-only"
@@ -1461,7 +1466,14 @@ class MultiClouds(SensoryBase):
                 drift_pop.set_parameters( val=False, name='weight')
                 fit_lbfgs( drift_pop, self[:], verbose=False, tolerance_change=1e-10)
 
-        LLs = drift_pop.eval_models(self[val_inds], null_adjusted=False)
+        if speckledXV:
+            speck_data = {
+                'Xdrift': self[:]['Xdrift'],
+                'robs': self[:]['robs'],
+                'dfs': self[:]['dfs'] * self[:]['Mval'] }
+            LLs = drift_pop.eval_models(speck_data, null_adjusted=False)
+        else:
+            LLs = drift_pop.eval_models(self[val_inds], null_adjusted=False)
 
         if to_return is None:
             return LLs
@@ -1889,7 +1901,7 @@ class MultiClouds(SensoryBase):
         #if isinstance(idx, np.ndarray):
         #    idx = list(idx)
         # Convert trials to indices if trial-sample
-        if self.trial_sample:
+        if self.block_sample:
             idx = self.index_to_array(idx, len(self.block_inds))
             ts = self.block_inds[idx[0]]
             for ii in idx[1:]:
@@ -1922,15 +1934,18 @@ class MultiClouds(SensoryBase):
             #     out['fix_n'] = self.fix_n[idx]
 
         if self.speckled:
-            if self.Mtrn_out is None:
-                M1tmp = self.Mval[:, self.cells_out]
-                M2tmp = self.Mtrn[:, self.cells_out]
-                out['Mval'] = M1tmp[idx, :]
-                out['Mtrn'] = M2tmp[idx, :]
-            else:
-                out['Mval'] = self.Mtrn_out[idx, :]
+            if len(self.cells_out) > 0:
+                if self.Mtrn_out is None:
+                    self.Mval_out = self.Mval[:, self.cells_out]
+                    self.Mtrn_out = self.Mtrn[:, self.cells_out]
+                    #out['Mval'] = M1tmp[idx, :]
+                    #out['Mtrn'] = M2tmp[idx, :]
+                out['Mval'] = self.Mval_out[idx, :]
                 out['Mtrn'] = self.Mtrn_out[idx, :]
-
+            else:
+                out['Mval'] = self.Mval[idx, :]
+                out['Mtrn'] = self.Mtrn[idx, :]
+                
         if self.binocular and self.output_separate_eye_stim:
             # Overwrite left stim with left eye only
             tmp_dims = out['stim'].shape[-1]//2

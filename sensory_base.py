@@ -27,7 +27,7 @@ class SensoryBase(Dataset):
         filenames, # this could be single filename or list of filenames, to be processed in specific way
         datadir, 
         # Stim setup
-        trial_sample=False,
+        block_sample=False,
         num_lags=10,
         time_embed=0,  # 0 is no time embedding, 1 is time_embedding with get_item, 2 is pre-time_embedded
         #maxT = None,
@@ -42,7 +42,7 @@ class SensoryBase(Dataset):
         Args:
             filenames: the filenames to use
             datadir: the data directory
-            trial_sample: whether to sample trials
+            block_sample: whether to sample trials
             num_lags: the number of lags presumably used by models (stored but not used in SensoryBase)
             time_embed: the time embedding to use
             include_MUs: whether to include MUs
@@ -53,7 +53,7 @@ class SensoryBase(Dataset):
         self.filenames = filenames
         self.device = device
         
-        self.trial_sample = trial_sample
+        self.block_sample = block_sample
         self.num_lags = num_lags
         self.stim_dims = None
         self.time_embed = time_embed
@@ -102,7 +102,7 @@ class SensoryBase(Dataset):
             
     # END SensoryBase.__init__
 
-    def add_covariate( self, cov_name=None, cov=None ):
+    def add_covariate( self, cov_name=None, cov=None, dtype=torch.float32 ):
         """
         Adds a covariate to the dataset
 
@@ -135,7 +135,7 @@ class SensoryBase(Dataset):
         if isinstance(cov, torch.Tensor):
             self.covariates[cov_name] = deepcopy(cov)
         else:
-            self.covariates[cov_name] = torch.tensor(cov, dtype=torch.float32)
+            self.covariates[cov_name] = torch.tensor(cov, dtype=dtype)
     # END SensoryBase.add_covariate()
 
     def append_covariates( self, out, idx ):
@@ -578,9 +578,9 @@ class SensoryBase(Dataset):
 
         # Otherwise calculate across all data
         if self.preload:
-            Reff = (self.dfs * self.robs).sum(dim=0).cpu()
-            Teff = self.dfs.sum(dim=0).clamp(min=1e-6).cpu()
-            return (Reff/Teff)[cells].detach().numpy()
+            Reff = np.sum(self.dfs * self.robs, axis=0)
+            Teff = np.maximum(np.sum(self.dfs, axis=0), 1)
+            return (Reff/Teff)[cells]
         else:
             print('Still need to implement avRs without preloading')
             return None
@@ -717,7 +717,8 @@ class SensoryBase(Dataset):
                 for tr in ival:
                     self.Mval[self.block_inds[tr], cc] = 1.0
                     self.Mtrn[self.block_inds[tr], cc] = 0.0
-        if self.cells_out is not None:
+
+        if len(self.cells_out) > 0:
             self.Mtrn_out = deepcopy(self.Mtrn[:, self.cells_out])
             self.Mval_out = deepcopy(self.Mval[:, self.cells_out])
     # END SensoryBase.speckledXV_setup
@@ -772,7 +773,7 @@ class SensoryBase(Dataset):
             trn_inds = range(len(self))
             val_inds = range(len(self))
         else:
-            assert not self.trial_sample, "trial-sample will not work with generic datasets"
+            assert not self.block_sample, "trial-sample will not work with generic datasets"
             trn_inds = self.train_inds
             val_inds = self.val_inds
 
