@@ -247,13 +247,15 @@ class SensoryBase(Dataset):
         return tmp_stim
     # END SensoryBase.time_embedding()
 
-    def construct_drift_design_matrix( self, block_anchors=None):
+    def construct_drift_design_matrix( self, block_anchors=None, zero_right=False):
         """
         Note this requires self.block_inds, and either uses self.drift_interval or block_anchors
-        
+        Option to anchor to zero on the right size, and otherwise constant after last tent anchor
+
         Args:
             block_anchors: the block anchors to use
-            
+            zero_right: whether to anchor to zero on the right (Default: False)
+
         Returns:
             None
         """
@@ -274,7 +276,8 @@ class SensoryBase(Dataset):
         
         self.anchors = anchors
         self.Xdrift = torch.tensor( 
-            self.design_matrix_drift( self.NT, anchors, zero_left=False, const_right=True),
+            self.design_matrix_drift(self.NT, anchors, zero_left=False,
+                                     zero_right=zero_right, const_right=True),
             dtype=torch.float32)
     # END SenspryBase.construct_drift_design_matrix()
 

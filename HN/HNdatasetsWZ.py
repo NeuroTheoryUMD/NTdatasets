@@ -194,7 +194,7 @@ class HNdataset(SensoryBase):
         if self.drift_interval is None:
             cued_transitions = np.where(abs(np.diff(self.TRcued)) > 0)[0]
             anchors = [0] + list(cued_transitions[range(1, len(cued_transitions), 2)])
-            self.construct_drift_design_matrix(block_anchors=anchors)
+            self.construct_drift_design_matrix(block_anchors=anchors, zero_right=True)
         else:
             raise ValueError(
                 "drift_interval is not supported for this dataset. The drift matrix is constructed based on cue transitions. Please omit the drift_intervsal argument and try creating a data instance again."
