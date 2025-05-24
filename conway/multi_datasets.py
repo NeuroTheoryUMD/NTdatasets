@@ -178,7 +178,7 @@ class MultiClouds(SensoryBase):
         # the file_info has the full information about experimental data (from the files themselves)
         self.tranges = [None] * self.Nexpts
         self.cranges = [None] * self.Nexpts
-        self.block_inds = []
+        #self.block_inds = []   # Done in SensoryBase
         tcount, blkcount = 0, 0
 
         # Structure of file on time/trial level 
@@ -313,10 +313,11 @@ class MultiClouds(SensoryBase):
             NMUs = 0
 
         # Unit information
+        NC = NSUs
         if self.includeMUs:
-            NC = NSUs + NMUs
+            NC += NMUs
         channel_map = np.array(f['Robs_probe_ID'], dtype=np.int64)[0, :]
-        channel_ratings = np.array(f['Robs_rating']).squeeze()
+        channel_ratings = np.array(f['Robs_rating'], dtype=np.int64).squeeze()
         if (NMUs > 0) & self.includeMUs:
             channel_map = np.concatenate( 
                 (channel_map, np.array(f['RobsMU_probe_ID'], dtype=np.int64).squeeze()), axis=0)
@@ -493,16 +494,40 @@ class MultiClouds(SensoryBase):
 
     def modify_expt_time_range(self, trange, expt_n=0, absolute_time_scale=True):
         """
-        there is an existing trange -- trange assumed to be absolute_time_scale, but could be mod
-        #self.tranges[ff] = self.file_info[ff]['tmap']
-        # will have to change self.tranges, re-assemble_robs, and rebuild stim (if built already)
-        # will also have to go through and trim out irrelevant trials, and renumber -- how do this?
+        Change the times represented in robs/dfs according to new time range. This changes
+        the trange in experiment info that is used to construct other variables as well.
+
+        Because there is an existing trange, it will have to modify, and must be specified whether
+        the new trange is in absolute time (absolute_time_scale=True, default) or relative to the 
+        times currently being used (i.e., current trange) 
+
+        Args:
+            trange: new time range of particular experiment (array of ints)
+            expt_n: which experiment the trange-mod applies to (default=0)
+            absolute_time_scale: whether trange is indexed to absolute time (default) or previous trange
+
+        Outputs:
+            None, although changes dataset itself in multiple ways
         """
+        # Convert time scale
         if absolute_time_scale:
-            self.tranges[expt_n] = np.intersect1d( trange, self.tranges[expt_n])
+            trange = np.intersect1d( trange, self.tranges[expt_n])
         else:
-            self.tranges[expt_n] = self.tranges[expt_n][trange]
-        
+            trange = self.tranges[expt_n][trange]
+
+        # Check validity of time points at trial boundaries
+        Ntr = len(self.block_inds)
+        start_block, end_block = -1, -1
+        for tt in range(Ntr):
+            if self.block_inds[tt][0] == trange[0]:
+                start_block = tt
+            if self.block_inds[tt][-1] == trange[-1]:
+                end_block = tt
+        assert (start_block >= 0), "trange must respect trial boundaries: start_block"
+        assert (end_block >= 0), "trange must respect trial boundaries: start_block"
+        print( "  Trials included: %d to %d"%(start_block, end_block) )
+        self.tranges[expt_n] = trange
+
         # Recalculate NT and expt_tstarts and exptNT
         self.NT = 0
         for ee in range(self.Nexpts):
@@ -510,9 +535,12 @@ class MultiClouds(SensoryBase):
             self.exptNT[ee] = len(self.tranges[ee])
             self.NT += self.exptNT[ee]
 
-        self.assemble_robs()
+        self.assemble_robs() # this adjusts robs, dfs, and block_inds (across all expts)
+
         print('  Redoing cross-validation indices')
         self.crossval_setup()
+        if len(self.stim) > 0:
+            print( "WARNING: will need to rebuild the stimulus." )
     # END MultiClouds.modify_expt_time_range()
 
     def expt_membership(self, ccs):
@@ -1311,6 +1339,7 @@ class MultiClouds(SensoryBase):
         ax.set_aspect('equal', adjustable='box')
         plt.xlim([x0-BUF,x1+BUF])
         plt.ylim([y0-BUF,y1+BUF])
+        print(x0-BUF,x1+BUF, y0-BUF,y1+BUF)
         plt.show()
     # END MultiClouds.draw_stim_locations()
     
