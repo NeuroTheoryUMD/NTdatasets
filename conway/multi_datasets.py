@@ -177,9 +177,10 @@ class MultiClouds(SensoryBase):
         # The following are specific to the cells and tranges selected for the particular instance of the dataset
         # the file_info has the full information about experimental data (from the files themselves)
         self.tranges = [None] * self.Nexpts
+        self.block_ranges = [None] * self.Nexpts
         self.cranges = [None] * self.Nexpts
         #self.block_inds = []   # Done in SensoryBase
-        tcount, blkcount = 0, 0
+        tcount = 0
 
         # Structure of file on time/trial level 
         for ee in range(self.Nexpts):
@@ -206,7 +207,7 @@ class MultiClouds(SensoryBase):
                     if len(tbreaks) > 0:
                         print("  Disjoint data exists with this eye_config -- trunctating to first section.")
                         self.tranges[ee] = self.tranges[ee][range(tbreaks[0]+1)]
-
+            
             #if self.include_MUs:
             #    self.fileNC[ff] = self.file_info[ff]['NSUs'] + self.file_info[ff]['NMUs']
             #else:
@@ -524,10 +525,11 @@ class MultiClouds(SensoryBase):
             if self.block_inds[tt][-1] == trange[-1]:
                 end_block = tt
         assert (start_block >= 0), "trange must respect trial boundaries: start_block"
-        assert (end_block >= 0), "trange must respect trial boundaries: start_block"
-        print( "  Trials included: %d to %d"%(start_block, end_block) )
+        assert (end_block >= 0), "trange must respect trial boundaries: end_block"
+        print( "  Trials included: %d to %d"%(start_block, end_block), self.expt_blkstart[expt_n] )
         self.tranges[expt_n] = trange
-
+        # self.block_ranges is modified with assemble_robs
+        #self.block_ranges[expt_n] = np.arange(start_block + self.expt_blkstart[expt_n], end_block+ self.expt_blkstart[expt_n])
         # Recalculate NT and expt_tstarts and exptNT
         self.NT = 0
         for ee in range(self.Nexpts):
@@ -731,14 +733,14 @@ class MultiClouds(SensoryBase):
             #self.dfs[tcount+np.arange(NTslice), :] = deepcopy( df_tslice[self.tranges[ff], :] )
 
             # Make block_inds
-            e_block_inds, _ = self.parse_trial_times_expt(ff, self.tranges[ff] )
+            e_block_inds, included_blocks = self.parse_trial_times_expt(ff, self.tranges[ff] )
             NBLK = e_block_inds.shape[0]
             for bb in range(NBLK):
                 self.block_inds.append( 
                     tcount + np.arange(e_block_inds[bb, 0], e_block_inds[bb, 1]) )
             self.exptNBLK[ff] = NBLK
             self.expt_blkstart[ff] = blkcount
-            
+            self.block_ranges[ff] = included_blocks #np.arange(blkcount, blkcount+NBLK)
             blkcount += NBLK
             tcount += NTexpt
 
@@ -890,7 +892,8 @@ class MultiClouds(SensoryBase):
             assert expt_n is not None, "BUILD_STIM: must specify expt_n"
 
         if self.file_info[expt_n]['stim_location_deltas'] is not None:
-            assert np.sum(abs(self.file_info[expt_n]['stim_location_deltas'])) == 0, "BUILD_STIM: There are stim-deltas but not implemented yet."
+            stim_deltas = self.file_info[expt_n]['stim_location_deltas'][self.block_ranges[expt_n]]
+            assert np.sum(abs(stim_deltas)) == 0, "BUILD_STIM: There are stim-deltas but not implemented yet."
         # Delete existing stim and clear cache to prevent memory issues on GPU
         if eyepos is not None:  # make sure empty list is same as None
             if len(eyepos) == 0:
