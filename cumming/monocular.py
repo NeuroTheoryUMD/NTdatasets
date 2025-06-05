@@ -25,7 +25,7 @@ class MultiDataset(SensoryBase):
     kwargs handled by SensoryBase:
         drift_interval: to build drift terms (spacing based on trials)
         time_embed: whether to time-embed or not
-        trial_sample: whether dataset returns time-contiguous trials for each index or individual time points 
+        block_sample: whether dataset returns time-contiguous trials for each index or individual time points 
         device
     """
 
@@ -45,7 +45,7 @@ class MultiDataset(SensoryBase):
             datadir: directory where the data is stored
             num_lags: how many lags back will the presumed model require (for establishing DFs too)
             time_embed: whether to time-embed or not
-            trial_sample: whether dataset returns time-contiguous trials for each index or individual time points 
+            block_sample: whether dataset returns time-contiguous trials for each index or individual time points 
             device: device to put the tensors on
             preload: whether to load all data into memory at once
             includeMUs: whether to include MUs in the dataset
@@ -242,7 +242,7 @@ class MultiDataset(SensoryBase):
             dictionary of tensors for this batch
         """
         # Convert trials to indices if trial-sample
-        if self.trial_sample:
+        if self.block_sample:
             if isinstance(index, slice):
                 index = np.arange(self.num_blocks)[index]  # convert to array
 
