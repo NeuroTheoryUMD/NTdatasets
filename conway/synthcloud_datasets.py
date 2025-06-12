@@ -14,9 +14,10 @@ class SimCloudData(SensoryBase):
     """
 
     def __init__(self,
-        datadir = '/home/ifernand/Cloud_SynthData_Proj/data/',
-        filename = 'cloud_data_stim_dim120_spike_time_sqrad_0.3.hdf5',
-        angle_filename = 'V1_neuron_orientation_in_deg_and_orientation_selection_sqrad_0.3_GQM.pkl',
+        datadir='/home/ifernand/Cloud_SynthData_Proj/data/',
+        filename='cloud_data_stim_dim120_spike_time_sqrad_0.3.hdf5',
+        angle_filename='V1_neuron_orientation_in_deg_and_orientation_selection_sqrad_0.3_GQM.pkl',
+        test=False,
         cell_type_list=None,
         num_cells=None,
         block_len=1000,
@@ -28,6 +29,7 @@ class SimCloudData(SensoryBase):
             datadir: directory that the datafiles are stored
             filename: Name of the HDF5 file to be used as a string
             angle_filename: Name of the pickle file where angle information is stored
+            test: if test data or not
             cell_type_list: List of cells to use. All posible cell types are ['X_OFF', 'X_ON', 'V1_Exc_L4', 'V1_Inh_L4', 'V1_Exc_L2/3', 'V1_Inh_L2/3']. Data will be in the order of list.
             block_len: Number of time points in each block. Must be a multiple of the total number of time points. (Defalut 1000)
             res_frac: Resolution from orig data (Degault 1)
@@ -90,35 +92,67 @@ class SimCloudData(SensoryBase):
             #self.robs = f['robs'][:][:,cell_idx]
             file_start_pos = list(f['file_start_pos'][:])
             spike_times = []
-            for i in range(self.NC):
-                j = cell_idx[i]
-                spike_times.append(f['spike_time_cell_'+str(j)][:])
+            if not test:
+                for i in range(self.NC):
+                    j = cell_idx[i]
+                    spike_times.append(f['spike_time_cell_'+str(j)][:])
+            else:
+                for i in range(self.NC):
+                    j = cell_idx[i]
+                    cell_spike_time = []
+                    for k in range(10):
+                        cell_spike_time.append(f['spike_time_cell_'+str(j)+'_repeat_'+str(k)][:])
+                    spike_times.append(cell_spike_time)
         x_pos = x_pos[cell_idx]
         y_pos = y_pos[cell_idx]
         
         # Compute robs from spike times
         self.NT = int(self.res_frac*init_stim.shape[0]) # number of time points
-        robs = np.zeros((self.NT,self.NC)).astype(np.uint8)
-        for i in range(self.NC):
-            cell_spike_times = spike_times[i]
-            trial_idx = list(np.where(cell_spike_times == -1)[0])
-            start = 0
-            for j in range(len(trial_idx)):
-                if j == 0:
-                    trial_NT = int(self.res_frac*(file_start_pos[j+1] - file_start_pos[j]))
-                    trial_spike_times = cell_spike_times[:trial_idx[j]]            
-                elif j == len(trial_idx)-1:
-                    trial_NT = int(self.res_frac*(init_stim.shape[0] - file_start_pos[j]))
-                    trial_spike_times = cell_spike_times[trial_idx[j-1]+1:trial_idx[j]]
-                else:
-                    trial_NT = int(self.res_frac*(file_start_pos[j+1] - file_start_pos[j]))
-                    trial_spike_times = cell_spike_times[trial_idx[j-1]+1:trial_idx[j]]
-                #spikes = np.histogram(trial_spike_times, bins=trial_NT, range=(0,int((16/self.res_frac)*trial_NT)))[0].astype(np.uint8)
-                #robs[start:start+trial_NT,i] = spikes
-                robs[start:start+trial_NT,i] = np.histogram(
-                    trial_spike_times, bins=np.arange(0,trial_NT+1)*16/self.res_frac)[0].astype(np.uint8)
-                start += trial_NT
-        self.robs = robs
+        if not test:
+            robs = np.zeros((self.NT,self.NC)).astype(np.uint8)
+            for i in range(self.NC):
+                cell_spike_times = spike_times[i]
+                trial_idx = list(np.where(cell_spike_times == -1)[0])
+                start = 0
+                for j in range(len(trial_idx)):
+                    if j == 0:
+                        trial_NT = int(self.res_frac*(file_start_pos[j+1] - file_start_pos[j]))
+                        trial_spike_times = cell_spike_times[:trial_idx[j]]            
+                    elif j == len(trial_idx)-1:
+                        trial_NT = int(self.res_frac*(init_stim.shape[0] - file_start_pos[j]))
+                        trial_spike_times = cell_spike_times[trial_idx[j-1]+1:trial_idx[j]]
+                    else:
+                        trial_NT = int(self.res_frac*(file_start_pos[j+1] - file_start_pos[j]))
+                        trial_spike_times = cell_spike_times[trial_idx[j-1]+1:trial_idx[j]]
+                    #spikes = np.histogram(trial_spike_times, bins=trial_NT, range=(0,int((16/self.res_frac)*trial_NT)))[0].astype(np.uint8)
+                    #robs[start:start+trial_NT,i] = spikes
+                    robs[start:start+trial_NT,i] = np.histogram(
+                        trial_spike_times, bins=np.arange(0,trial_NT+1)*16/self.res_frac)[0].astype(np.uint8)
+                    start += trial_NT
+            self.robs = robs
+        else:
+            robs = np.zeros((self.NT,10,self.NC)).astype(np.uint8)
+            for i in range(self.NC):
+                cell_spike_times = spike_times[i]
+                for k in range(10):
+                    run_cell_spike_times = cell_spike_times[k]
+                    trial_idx = list(np.where(run_cell_spike_times == -1)[0])
+                    start = 0
+                    for j in range(len(trial_idx)):
+                        if j == 0:
+                            trial_NT = int(self.res_frac*(file_start_pos[j+1] - file_start_pos[j]))
+                            trial_spike_times = run_cell_spike_times[:trial_idx[j]]            
+                        elif j == len(trial_idx)-1:
+                            trial_NT = int(self.res_frac*(init_stim.shape[0] - file_start_pos[j]))
+                            trial_spike_times = run_cell_spike_times[trial_idx[j-1]+1:trial_idx[j]]
+                        else:
+                            trial_NT = int(self.res_frac*(file_start_pos[j+1] - file_start_pos[j]))
+                            trial_spike_times = run_cell_spike_times[trial_idx[j-1]+1:trial_idx[j]]
+                        robs[start:start+trial_NT,k,i] = np.histogram(
+                        trial_spike_times, bins=np.arange(0,trial_NT+1)*16/self.res_frac)[0].astype(np.uint8)
+                        start += trial_NT
+            avg_robs = np.mean(robs, axis=1)
+            self.robs = avg_robs
 
         # Load orientation info
         ori_dict = np.load(datadir+angle_filename, allow_pickle=True)
@@ -166,7 +200,7 @@ class SimCloudData(SensoryBase):
         for i in range(len(file_start_pos)):
             j = file_start_pos[i]
             self.dfs[j:j+self.num_lags,:] = 0
-
+    
         # Generate mu0 values from RF positions
         pxl_x_pos, pxl_y_pos = deg2pxl(x_pos, y_pos, L, down_sample=down_sample)
         self.mu0s = utils.pixel2grid(np.stack((pxl_x_pos,pxl_y_pos),axis=1), L=L)
