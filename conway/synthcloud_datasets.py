@@ -3,7 +3,7 @@ import h5py
 import numpy as np
 import NDNT.utils as utils
 from torch.utils.data import Dataset
-from ColorDataUtils.simproj_utils import downsample_stim, deg2pxl
+from ColorDataUtils.simproj_utils import downsample_stim, deg2pxl, meandf
 from NTdatasets.sensory_base import SensoryBase
 
 
@@ -18,7 +18,8 @@ class SimCloudData(SensoryBase):
         filename='cloud_data_stim_dim120_spike_time_sqrad_0.3.hdf5',
         angle_filename='V1_neuron_orientation_in_deg_and_orientation_selection_sqrad_0.3_GQM.pkl',
         test=False,
-        cell_type_list=None,
+        norm_robs=False,
+        cell_type_list=['V1_Exc_L4', 'V1_Inh_L4', 'V1_Exc_L2/3', 'V1_Inh_L2/3'],
         num_cells=None,
         block_len=1000,
         res_frac=1,
@@ -30,6 +31,7 @@ class SimCloudData(SensoryBase):
             filename: Name of the HDF5 file to be used as a string
             angle_filename: Name of the pickle file where angle information is stored
             test: if test data or not
+            norm_robs: normalize robs by dividing by mean spike count
             cell_type_list: List of cells to use. All posible cell types are ['X_OFF', 'X_ON', 'V1_Exc_L4', 'V1_Inh_L4', 'V1_Exc_L2/3', 'V1_Inh_L2/3']. Data will be in the order of list.
             block_len: Number of time points in each block. Must be a multiple of the total number of time points. (Defalut 1000)
             res_frac: Resolution from orig data (Degault 1)
@@ -105,6 +107,8 @@ class SimCloudData(SensoryBase):
                     spike_times.append(cell_spike_time)
         x_pos = x_pos[cell_idx]
         y_pos = y_pos[cell_idx]
+
+        self.num_lags = num_lags
         
         # Compute robs from spike times
         self.NT = int(self.res_frac*init_stim.shape[0]) # number of time points
@@ -129,12 +133,20 @@ class SimCloudData(SensoryBase):
                     robs[start:start+trial_NT,i] = np.histogram(
                         trial_spike_times, bins=np.arange(0,trial_NT+1)*16/self.res_frac)[0].astype(np.uint8)
                     start += trial_NT
+            dfs = np.ones(robs.shape)
+            for i in range(len(file_start_pos)):
+                j = file_start_pos[i]
+                dfs[j:j+self.num_lags,:] = 0
+            if norm_robs:
+                robs = robs/meandf(robs, dfs, axis=0)
             self.robs = robs
+            self.dfs = dfs
         else:
-            robs = np.zeros((self.NT,10,self.NC)).astype(np.uint8)
+            NR = 10 # 10 repeats
+            robs = np.zeros((self.NT,NR,self.NC)).astype(np.uint8)
             for i in range(self.NC):
                 cell_spike_times = spike_times[i]
-                for k in range(10):
+                for k in range(NR):
                     run_cell_spike_times = cell_spike_times[k]
                     trial_idx = list(np.where(run_cell_spike_times == -1)[0])
                     start = 0
@@ -151,8 +163,21 @@ class SimCloudData(SensoryBase):
                         robs[start:start+trial_NT,k,i] = np.histogram(
                         trial_spike_times, bins=np.arange(0,trial_NT+1)*16/self.res_frac)[0].astype(np.uint8)
                         start += trial_NT
-            avg_robs = np.mean(robs, axis=1)
-            self.robs = avg_robs
+            dfs = np.ones(robs.shape)
+            for i in range(len(file_start_pos)):
+                j = file_start_pos[i]
+                dfs[j:j+self.num_lags,:,:] = 0
+                
+            if norm_robs:
+                robs = robs/meandf(robs, dfs, axis=0)
+                
+            self.repeat_robs = robs
+            self.repeat_dfs = dfs
+            
+            psth = meandf(robs, dfs, axis=1)
+            psth_dfs = np.max(dfs,axis=1)
+            self.robs = psth
+            self.dfs = psth_dfs
 
         # Load orientation info
         ori_dict = np.load(datadir+angle_filename, allow_pickle=True)
@@ -194,12 +219,6 @@ class SimCloudData(SensoryBase):
         self.val_inds = np.arange(Tdivider, self.NT)
         # this would be the best way to do cross-val, but ok with sim
         #self.crossval_setup(folds=5, random_gen=False, test_set=False, verbose=False)
-
-        self.num_lags = num_lags
-        self.dfs = np.ones(self.robs.shape)
-        for i in range(len(file_start_pos)):
-            j = file_start_pos[i]
-            self.dfs[j:j+self.num_lags,:] = 0
     
         # Generate mu0 values from RF positions
         pxl_x_pos, pxl_y_pos = deg2pxl(x_pos, y_pos, L, down_sample=down_sample)
