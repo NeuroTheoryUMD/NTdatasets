@@ -362,6 +362,9 @@ class MultiClouds(SensoryBase):
         #self.ETtrace = np.array(f['ETtrace'], dtype=np.float32)
         #self.ETtraceHR = np.array(f['ETtrace_raw'], dtype=np.float32)
 
+        # To use with integrated eye tracking
+        plexon_trial_times = np.array(f['trial_start_ts'], dtype=np.float32)
+
         # Binocular information
         Lpresent = np.array(f['useLeye'], dtype=int)[:,0]
         Rpresent = np.array(f['useReye'], dtype=int)[:,0]
@@ -424,6 +427,7 @@ class MultiClouds(SensoryBase):
             'stim_locsLP': stim_locsLP,
             'stim_locsET': stim_locsET,
             'stim_location_deltas': stim_location_deltas,
+            'plexon_trial_times': plexon_trial_times,
             'cloud_info': cloud_info}
     # END MultiClouds.read_file_info()  
 
@@ -979,7 +983,7 @@ class MultiClouds(SensoryBase):
                 num_clr = 1
             else:
                 num_clr = 3
-
+    
             # Read in stimuli
             if len(self.fhandles[expt_n]['stimET'].shape) == 1:
                 stimET_base = None
@@ -990,54 +994,87 @@ class MultiClouds(SensoryBase):
             stimLP_base = np.array(self.fhandles[expt_n]['stim'][self.tranges[expt_n], ...], dtype=np.int8)
             locsLP = self.file_info[expt_n]['stim_locsLP']
             fhandle = self.fhandles[expt_n]
-            sz = fhandle['stim'].shape
-            inds = np.arange(sz[0], dtype=np.int64)
+            #sz = fhandle['stim'].shape
+            #inds = np.arange(sz[0], dtype=np.int64)
 
             #stimET_base = np.array(self.fhandles[expt_n]['stimET'][self.tranges[expt_n], ...], dtype=np.int8)
             #stimLP_base = np.array(self.fhandles[expt_n]['stim'][self.tranges[expt_n], ...], dtype=np.int8)
             #locsET = self.file_info[expt_n]['stim_locsET']
             #locsLP = self.file_info[expt_n]['stim_locsLP']
+            sz = stimLP_base.shape
+            # At this point, stimLP_base and (maybe) stimET_base are over tranges and all colors
+            # next part will make appropriately sized/sampled versions of each into stimET and stimLP
             if self.binocular:
-                num_clr *= 2  # make binocular be like just 2x more colors (channel dim)
-                #Lpresent = np.array(fhandle['useLeye'], dtype=int)[:,0]
-                #Rpresent = np.array(fhandle['useReye'], dtype=int)[:,0]
-                #LRpresent = Lpresent + 2*Rpresent
                 LRpresent = self.file_info[expt_n]['LRpresent'][self.tranges[expt_n]]
-                Leye = inds[LRpresent[inds] != 2]
-                Reye = inds[LRpresent[inds] != 1]
+            # LEYAS version
+            #    num_clr *= 2  # make binocular be like just 2x more colors (channel dim)
+            #    Leye = inds[LRpresent[inds] != 2]
+            #    Reye = inds[LRpresent[inds] != 1]
+            #    self.binocular_gain = torch.zeros( [len(LRpresent), 2], dtype=torch.float32 )
+            #    self.binocular_gain[LRpresent == 1, 0] = 1.0
+            #    self.binocular_gain[LRpresent == 2, 1] = 1.0
+            #    if self.luminance_only: 
+            #        stimLP = np.zeros((np.shape(stimLP_base)[0], 2, np.shape(stimLP_base)[2], np.shape(stimLP_base)[3]))
+            #        stimLP[Leye, 0, ...] = np.array(fhandle['stim'], dtype=np.float32)[Leye, 0, ...]
+            #        stimLP[Reye, 1, ...] = np.array(fhandle['stim'], dtype=np.float32)[Reye, 0, ...]
+            #        if stimET_base is not None:
+            #            stimET = np.zeros((np.shape(stimET_base)[0], 2, np.shape(stimET_base)[2], np.shape(stimET_base)[3]))
+            #            stimET[Leye, 0, ...] = np.array(fhandle['stimET'], dtype=np.float32)[Leye, 0, ...]
+            #            stimET[Reye, 1, ...] = np.array(fhandle['stimET'], dtype=np.float32)[Reye, 0, ...]
+            #    else:
+            #        stimLP = np.zeros((np.shape(stimLP_base)[0], 6, np.shape(stimLP_base)[2], np.shape(stimLP_base)[3]))
+            #        stimLP[Leye, 0:3, ...] = np.array(fhandle['stim'], dtype=np.float32)[Leye, ...]
+            #        stimLP[Reye, 3:6, ...] = np.array(fhandle['stim'], dtype=np.float32)[Reye, ...]
+            #        if stimET_base is not None:
+            #            stimET = np.zeros((np.shape(stimET_base)[0], 6, np.shape(stimET_base)[2], np.shape(stimET_base)[3]))
+            #            stimET[Leye, 0:3, ...] = np.array(fhandle['stimET'], dtype=np.float32)[Leye, ...]
+            #            stimET[Reye, 3:6, ...] = np.array(fhandle['stimET'], dtype=np.float32)[Reye, ...]
+                Leye = LRpresent != 2
+                Reye = LRpresent != 1
+                num_dim0 = num_clr*2
                 self.binocular_gain = torch.zeros( [len(LRpresent), 2], dtype=torch.float32 )
                 self.binocular_gain[LRpresent == 1, 0] = 1.0
                 self.binocular_gain[LRpresent == 2, 1] = 1.0
+                stimLP = np.zeros((sz[0], num_dim0, sz[2], sz[3]))
+                stimET = np.zeros((sz[0], num_dim0, sz[2], sz[3]))  # stimET will be the same size (even if not used)
                 if self.luminance_only: 
-                    #empty_stimET=np.zeros((np.shape(stimET)[0], 2, np.shape(stimET)[2], np.shape(stimET)[3]))
-                    stimLP = np.zeros((np.shape(stimLP_base)[0], 2, np.shape(stimLP_base)[2], np.shape(stimLP_base)[3]))
-                    stimLP[Leye, 0, ...] = np.array(fhandle['stim'], dtype=np.float32)[Leye, 0, ...]
-                    stimLP[Reye, 1, ...] = np.array(fhandle['stim'], dtype=np.float32)[Reye, 0, ...]
+                    #stimLP = np.zeros((np.shape(stimLP_base)[0], 2, np.shape(stimLP_base)[2], np.shape(stimLP_base)[3]))
+                    #stimLP[Leye, 0, ...] = np.array(fhandle['stim'], dtype=np.float32)[Leye, 0, ...]
+                    stimLP[Leye, 0, ...] = deepcopy(stimLP_base[Leye, 0, ...])
+                    stimLP[Reye, 1, ...] = deepcopy(stimLP_base[Reye, 0, ...])
+                    #stimLP[Reye, 1, ...] = np.array(fhandle['stim'], dtype=np.float32)[Reye, 0, ...]
                     if stimET_base is not None:
-                        stimET = np.zeros((np.shape(stimET_base)[0], 2, np.shape(stimET_base)[2], np.shape(stimET_base)[3]))
-                        stimET[Leye, 0, ...] = np.array(fhandle['stimET'], dtype=np.float32)[Leye, 0, ...]
-                        stimET[Reye, 1, ...] = np.array(fhandle['stimET'], dtype=np.float32)[Reye, 0, ...]
+                       # stimET = np.zeros((np.shape(stimET_base)[0], 2, np.shape(stimET_base)[2], np.shape(stimET_base)[3]))
+                        #stimET[Leye, 0, ...] = np.array(fhandle['stimET'], dtype=np.float32)[Leye, 0, ...]
+                        stimET[Leye, 0, ...] = deepcopy(stimET_base[Leye, 0, ...])
+                        stimET[Reye, 1, ...] = deepcopy(stimET_base[Reye, 1, ...])
+                        #stimET[Reye, 1, ...] = np.array(fhandle['stimET'], dtype=np.float32)[Reye, 0, ...]
                 else:
-                    stimLP = np.zeros((np.shape(stimLP_base)[0], 6, np.shape(stimLP_base)[2], np.shape(stimLP_base)[3]))
-                    stimLP[Leye, 0:3, ...] = np.array(fhandle['stim'], dtype=np.float32)[Leye, ...]
-                    stimLP[Reye, 3:6, ...] = np.array(fhandle['stim'], dtype=np.float32)[Reye, ...]
+                    #stimLP = np.zeros((np.shape(stimLP_base)[0], 6, np.shape(stimLP_base)[2], np.shape(stimLP_base)[3]))
+                    #stimLP[Leye, 0:3, ...] = np.array(fhandle['stim'], dtype=np.float32)[Leye, ...]
+                    stimLP[Leye, 0:3, ...] = deepcopy(stimLP_base[Leye, ...])
+                    stimLP[Reye, 3:6, ...] = deepcopy(stimLP_base[Reye, ...])
+                    #stimLP[Reye, 3:6, ...] = np.array(fhandle['stim'], dtype=np.float32)[Reye, ...]
                     if stimET_base is not None:
-                        stimET = np.zeros((np.shape(stimET_base)[0], 6, np.shape(stimET_base)[2], np.shape(stimET_base)[3]))
-                        stimET[Leye, 0:3, ...] = np.array(fhandle['stimET'], dtype=np.float32)[Leye, ...]
-                        stimET[Reye, 3:6, ...] = np.array(fhandle['stimET'], dtype=np.float32)[Reye, ...]
-            else:
+                        #stimET = np.zeros((np.shape(stimET_base)[0], 6, np.shape(stimET_base)[2], np.shape(stimET_base)[3]))
+                        stimET[Leye, 0:3, ...] = deepcopy(stimET_base[Leye, ...])
+                        stimET[Reye, 3:6, ...] = deepcopy(stimET_base[Reye, ...])
+                        #stimET[Leye, 0:3, ...] = np.array(fhandle['stimET'], dtype=np.float32)[Leye, ...]
+                        #stimET[Reye, 3:6, ...] = np.array(fhandle['stimET'], dtype=np.float32)[Reye, ...]
+
+            else: # NON-BINOCULAR STIMULUS
+                num_dim0 = num_clr
                 stimET = stimET_base
                 stimLP = stimLP_base
                 if self.luminance_only:
                     stimLP = stimLP[:, 0, ...][:, None, ...]
                 if stimET_base is not None:
-                    # stimET=stimET_base
                     if self.luminance_only:
                         if stimET_base is not None: 
                             stimET = stimET[:, 0, ...][:, None, ...]  # maintain 2nd dim (length 1)
          
             NT = self.exptNT[expt_n]
-            newstim = np.zeros( [NT, num_clr, L, L], dtype=np.int8 )
+            newstim = np.zeros( [NT, num_dim0, L, L], dtype=np.int8 )
             for ii in range(locsLP.shape[1]):
                 OVLP = self.rectangle_overlap_ranges(stim_pos, locsLP[:, ii])
                 if OVLP is not None:
@@ -1075,12 +1112,21 @@ class MultiClouds(SensoryBase):
             for xx in fixranges[0]:
                 newstim[:, :, xx, fixranges[1]] = 0
 
+        ###### SHIFT STIMULUS ###### 
         if eyepos is not None:
             # Would want to shift by input eye positions if input here
-            #print('eye-position shifting not implemented yet')
+            if len(eyepos.shape) > 2:
+                assert self.binocular, "BUILD_STIM: Eyepos is eye specific but stimulus is not binocular."
+            else:
+                if self.binocular:
+                    print('Only a single eye position passed in: using same for both eyes')
+                    eyepos = np.repeat(eyepos[...,None],2, axis=2)
+
             print('  Shifting stim...')
+            # samples eyepos at appropriate time range (if eyepos longer than stim)
             if len(eyepos) > newstim.shape[0]:
                 eyepos = eyepos[self.tranges[expt_n]]
+            # if eyepos shorter than stim, assumes its just for binocular part of stim
             if len(eyepos) < newstim.shape[0] and self.binocular:
                 eyepos_padded=np.zeros((newstim.shape[0], 2))
                 #Lpresent = np.array(fhandle['useLeye'], dtype=int)[:,0]
@@ -1088,14 +1134,27 @@ class MultiClouds(SensoryBase):
                 #LRpresent = Lpresent + 2*Rpresent
                 LRpresent = self.file_info[expt_n]['LRpresent'][self.tranges[expt_n]]
 
-                bin_inds=inds[np.where(LRpresent[inds]==3)]
+                bin_inds=np.where(LRpresent==3)[0]
                 if len(bin_inds)!=len(eyepos):
                     eyepos_padded[bin_inds[0]:bin_inds[0]+len(eyepos)]=eyepos #Off by one errors, probably. 
                 else:
                     eyepos_padded[bin_inds]=eyepos
                 eyepos=eyepos_padded 
-            if num_clr == 6:                 
-                newstim = self.shift_stim( newstim, eyepos, batch_size=10)
+
+            if self.binocular:
+                for ee in range(eyepos.shape[2]):  # this will only be length 1 if monocular
+                    eindx = ee*num_clr+np.arange(num_clr)
+                    if num_clr > 1:
+                        batch_sz = 10
+                        if not self.block_sample:
+                            batch_sz *= 240
+                        newstim[:, eindx, ...] = self.shift_stim( 
+                            newstim[:, eindx, ...], eyepos[:,:,ee], batch_size=batch_sz)
+                    else:
+                        print(ee, eyepos[:5,0,ee])
+                        newstim[:, eindx, ...] = self.shift_stim(
+                            newstim[:, eindx, ...], eyepos[:,:,ee])
+
             else:
                 newstim = self.shift_stim(newstim, eyepos) 
 
@@ -1728,10 +1787,11 @@ class MultiClouds(SensoryBase):
             'ts': torch.tensor(np.arange(stim.shape[0]), dtype=torch.int64),  # keep track of indices for remapping
             'stim': torch.tensor(stim, dtype=torch.float32),
             'eyepos': torch.tensor(eyepos, dtype=torch.float32)*Lscale }
-
+        print(batch_size, stim.shape)
         ds = GenericDataset(stim_data, device=None)
         #ds.covariates['stim'] = ds.covariates['stim'].flatten(start_dim=1)
-        dl = DataLoader(ds, batch_size=batch_size, shuffle=False, num_workers=os.cpu_count()//2)
+        #dl = DataLoader(ds, batch_size=batch_size, shuffle=False, num_workers=os.cpu_count()//2)
+        dl = DataLoader(ds, batch_size=batch_size, shuffle=False)
 
         stimSH = deepcopy(stim_data['stim'])
         for batch in tqdm(dl):
