@@ -18,7 +18,7 @@ class SimCloudData(SensoryBase):
         filename='cloud_data_stim_dim120_spike_time_sqrad_0.3.hdf5',
         angle_filename='V1_neuron_orientation_in_deg_and_orientation_selection_sqrad_0.3_GQM.pkl',
         test=False,
-        norm_robs=False,
+        #norm_robs=False,
         cell_type_list=['V1_Exc_L4', 'V1_Inh_L4', 'V1_Exc_L2/3', 'V1_Inh_L2/3'],
         num_cells=None,
         block_len=1000,
@@ -31,7 +31,7 @@ class SimCloudData(SensoryBase):
             filename: Name of the HDF5 file to be used as a string
             angle_filename: Name of the pickle file where angle information is stored
             test: if test data or not
-            norm_robs: normalize robs by dividing by mean spike count
+            norm_robs (NO MORE): normalize robs by dividing by mean spike count
             cell_type_list: List of cells to use. All posible cell types are ['X_OFF', 'X_ON', 'V1_Exc_L4', 'V1_Inh_L4', 'V1_Exc_L2/3', 'V1_Inh_L2/3']. Data will be in the order of list.
             block_len: Number of time points in each block. Must be a multiple of the total number of time points. (Defalut 1000)
             res_frac: Resolution from orig data (Degault 1)
@@ -137,8 +137,8 @@ class SimCloudData(SensoryBase):
             for i in range(len(file_start_pos)):
                 j = file_start_pos[i]
                 dfs[j:j+self.num_lags,:] = 0
-            if norm_robs:
-                robs = robs/meandf(robs, dfs, axis=0)
+            #if norm_robs:
+            #    robs = robs/meandf(robs, dfs, axis=0)
             self.robs = robs
             self.dfs = dfs
         else:
@@ -168,8 +168,8 @@ class SimCloudData(SensoryBase):
                 j = file_start_pos[i]
                 dfs[j:j+self.num_lags,:,:] = 0
                 
-            if norm_robs:
-                robs = robs/meandf(robs, dfs, axis=0)
+            #if norm_robs:
+            #    robs = robs/meandf(robs, dfs, axis=0)
                 
             self.repeat_robs = robs
             self.repeat_dfs = dfs
