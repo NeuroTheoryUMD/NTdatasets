@@ -164,7 +164,7 @@
 </span><span id="L-24"><a href="#L-24"><span class="linenos"> 24</span></a><span class="sd">    kwargs handled by SensoryBase:</span>
 </span><span id="L-25"><a href="#L-25"><span class="linenos"> 25</span></a><span class="sd">        drift_interval: to build drift terms (spacing based on trials)</span>
 </span><span id="L-26"><a href="#L-26"><span class="linenos"> 26</span></a><span class="sd">        time_embed: whether to time-embed or not</span>
-</span><span id="L-27"><a href="#L-27"><span class="linenos"> 27</span></a><span class="sd">        trial_sample: whether dataset returns time-contiguous trials for each index or individual time points </span>
+</span><span id="L-27"><a href="#L-27"><span class="linenos"> 27</span></a><span class="sd">        block_sample: whether dataset returns time-contiguous trials for each index or individual time points </span>
 </span><span id="L-28"><a href="#L-28"><span class="linenos"> 28</span></a><span class="sd">        device</span>
 </span><span id="L-29"><a href="#L-29"><span class="linenos"> 29</span></a><span class="sd">    &quot;&quot;&quot;</span>
 </span><span id="L-30"><a href="#L-30"><span class="linenos"> 30</span></a>
@@ -184,7 +184,7 @@
 </span><span id="L-44"><a href="#L-44"><span class="linenos"> 44</span></a><span class="sd">            datadir: directory where the data is stored</span>
 </span><span id="L-45"><a href="#L-45"><span class="linenos"> 45</span></a><span class="sd">            num_lags: how many lags back will the presumed model require (for establishing DFs too)</span>
 </span><span id="L-46"><a href="#L-46"><span class="linenos"> 46</span></a><span class="sd">            time_embed: whether to time-embed or not</span>
-</span><span id="L-47"><a href="#L-47"><span class="linenos"> 47</span></a><span class="sd">            trial_sample: whether dataset returns time-contiguous trials for each index or individual time points </span>
+</span><span id="L-47"><a href="#L-47"><span class="linenos"> 47</span></a><span class="sd">            block_sample: whether dataset returns time-contiguous trials for each index or individual time points </span>
 </span><span id="L-48"><a href="#L-48"><span class="linenos"> 48</span></a><span class="sd">            device: device to put the tensors on</span>
 </span><span id="L-49"><a href="#L-49"><span class="linenos"> 49</span></a><span class="sd">            preload: whether to load all data into memory at once</span>
 </span><span id="L-50"><a href="#L-50"><span class="linenos"> 50</span></a><span class="sd">            includeMUs: whether to include MUs in the dataset</span>
@@ -381,7 +381,7 @@
 </span><span id="L-241"><a href="#L-241"><span class="linenos">241</span></a><span class="sd">            dictionary of tensors for this batch</span>
 </span><span id="L-242"><a href="#L-242"><span class="linenos">242</span></a><span class="sd">        &quot;&quot;&quot;</span>
 </span><span id="L-243"><a href="#L-243"><span class="linenos">243</span></a>        <span class="c1"># Convert trials to indices if trial-sample</span>
-</span><span id="L-244"><a href="#L-244"><span class="linenos">244</span></a>        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">trial_sample</span><span class="p">:</span>
+</span><span id="L-244"><a href="#L-244"><span class="linenos">244</span></a>        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">block_sample</span><span class="p">:</span>
 </span><span id="L-245"><a href="#L-245"><span class="linenos">245</span></a>            <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">index</span><span class="p">,</span> <span class="nb">slice</span><span class="p">):</span>
 </span><span id="L-246"><a href="#L-246"><span class="linenos">246</span></a>                <span class="n">index</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">num_blocks</span><span class="p">)[</span><span class="n">index</span><span class="p">]</span>  <span class="c1"># convert to array</span>
 </span><span id="L-247"><a href="#L-247"><span class="linenos">247</span></a>
@@ -812,7 +812,7 @@
 </span><span id="MultiDataset-26"><a href="#MultiDataset-26"><span class="linenos"> 26</span></a><span class="sd">    kwargs handled by SensoryBase:</span>
 </span><span id="MultiDataset-27"><a href="#MultiDataset-27"><span class="linenos"> 27</span></a><span class="sd">        drift_interval: to build drift terms (spacing based on trials)</span>
 </span><span id="MultiDataset-28"><a href="#MultiDataset-28"><span class="linenos"> 28</span></a><span class="sd">        time_embed: whether to time-embed or not</span>
-</span><span id="MultiDataset-29"><a href="#MultiDataset-29"><span class="linenos"> 29</span></a><span class="sd">        trial_sample: whether dataset returns time-contiguous trials for each index or individual time points </span>
+</span><span id="MultiDataset-29"><a href="#MultiDataset-29"><span class="linenos"> 29</span></a><span class="sd">        block_sample: whether dataset returns time-contiguous trials for each index or individual time points </span>
 </span><span id="MultiDataset-30"><a href="#MultiDataset-30"><span class="linenos"> 30</span></a><span class="sd">        device</span>
 </span><span id="MultiDataset-31"><a href="#MultiDataset-31"><span class="linenos"> 31</span></a><span class="sd">    &quot;&quot;&quot;</span>
 </span><span id="MultiDataset-32"><a href="#MultiDataset-32"><span class="linenos"> 32</span></a>
@@ -832,7 +832,7 @@
 </span><span id="MultiDataset-46"><a href="#MultiDataset-46"><span class="linenos"> 46</span></a><span class="sd">            datadir: directory where the data is stored</span>
 </span><span id="MultiDataset-47"><a href="#MultiDataset-47"><span class="linenos"> 47</span></a><span class="sd">            num_lags: how many lags back will the presumed model require (for establishing DFs too)</span>
 </span><span id="MultiDataset-48"><a href="#MultiDataset-48"><span class="linenos"> 48</span></a><span class="sd">            time_embed: whether to time-embed or not</span>
-</span><span id="MultiDataset-49"><a href="#MultiDataset-49"><span class="linenos"> 49</span></a><span class="sd">            trial_sample: whether dataset returns time-contiguous trials for each index or individual time points </span>
+</span><span id="MultiDataset-49"><a href="#MultiDataset-49"><span class="linenos"> 49</span></a><span class="sd">            block_sample: whether dataset returns time-contiguous trials for each index or individual time points </span>
 </span><span id="MultiDataset-50"><a href="#MultiDataset-50"><span class="linenos"> 50</span></a><span class="sd">            device: device to put the tensors on</span>
 </span><span id="MultiDataset-51"><a href="#MultiDataset-51"><span class="linenos"> 51</span></a><span class="sd">            preload: whether to load all data into memory at once</span>
 </span><span id="MultiDataset-52"><a href="#MultiDataset-52"><span class="linenos"> 52</span></a><span class="sd">            includeMUs: whether to include MUs in the dataset</span>
@@ -1029,7 +1029,7 @@
 </span><span id="MultiDataset-243"><a href="#MultiDataset-243"><span class="linenos">243</span></a><span class="sd">            dictionary of tensors for this batch</span>
 </span><span id="MultiDataset-244"><a href="#MultiDataset-244"><span class="linenos">244</span></a><span class="sd">        &quot;&quot;&quot;</span>
 </span><span id="MultiDataset-245"><a href="#MultiDataset-245"><span class="linenos">245</span></a>        <span class="c1"># Convert trials to indices if trial-sample</span>
-</span><span id="MultiDataset-246"><a href="#MultiDataset-246"><span class="linenos">246</span></a>        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">trial_sample</span><span class="p">:</span>
+</span><span id="MultiDataset-246"><a href="#MultiDataset-246"><span class="linenos">246</span></a>        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">block_sample</span><span class="p">:</span>
 </span><span id="MultiDataset-247"><a href="#MultiDataset-247"><span class="linenos">247</span></a>            <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">index</span><span class="p">,</span> <span class="nb">slice</span><span class="p">):</span>
 </span><span id="MultiDataset-248"><a href="#MultiDataset-248"><span class="linenos">248</span></a>                <span class="n">index</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">num_blocks</span><span class="p">)[</span><span class="n">index</span><span class="p">]</span>  <span class="c1"># convert to array</span>
 </span><span id="MultiDataset-249"><a href="#MultiDataset-249"><span class="linenos">249</span></a>
@@ -1305,7 +1305,7 @@
 kwargs handled by SensoryBase:
     drift_interval: to build drift terms (spacing based on trials)
     time_embed: whether to time-embed or not
-    trial_sample: whether dataset returns time-contiguous trials for each index or individual time points 
+    block_sample: whether dataset returns time-contiguous trials for each index or individual time points 
     device</p>
 </div>
 
@@ -1336,7 +1336,7 @@ kwargs handled by SensoryBase:
 </span><span id="MultiDataset.__init__-46"><a href="#MultiDataset.__init__-46"><span class="linenos"> 46</span></a><span class="sd">            datadir: directory where the data is stored</span>
 </span><span id="MultiDataset.__init__-47"><a href="#MultiDataset.__init__-47"><span class="linenos"> 47</span></a><span class="sd">            num_lags: how many lags back will the presumed model require (for establishing DFs too)</span>
 </span><span id="MultiDataset.__init__-48"><a href="#MultiDataset.__init__-48"><span class="linenos"> 48</span></a><span class="sd">            time_embed: whether to time-embed or not</span>
-</span><span id="MultiDataset.__init__-49"><a href="#MultiDataset.__init__-49"><span class="linenos"> 49</span></a><span class="sd">            trial_sample: whether dataset returns time-contiguous trials for each index or individual time points </span>
+</span><span id="MultiDataset.__init__-49"><a href="#MultiDataset.__init__-49"><span class="linenos"> 49</span></a><span class="sd">            block_sample: whether dataset returns time-contiguous trials for each index or individual time points </span>
 </span><span id="MultiDataset.__init__-50"><a href="#MultiDataset.__init__-50"><span class="linenos"> 50</span></a><span class="sd">            device: device to put the tensors on</span>
 </span><span id="MultiDataset.__init__-51"><a href="#MultiDataset.__init__-51"><span class="linenos"> 51</span></a><span class="sd">            preload: whether to load all data into memory at once</span>
 </span><span id="MultiDataset.__init__-52"><a href="#MultiDataset.__init__-52"><span class="linenos"> 52</span></a><span class="sd">            includeMUs: whether to include MUs in the dataset</span>
@@ -1505,7 +1505,7 @@ kwargs handled by SensoryBase:
 <li><strong>datadir:</strong>  directory where the data is stored</li>
 <li><strong>num_lags:</strong>  how many lags back will the presumed model require (for establishing DFs too)</li>
 <li><strong>time_embed:</strong>  whether to time-embed or not</li>
-<li><strong>trial_sample:</strong>  whether dataset returns time-contiguous trials for each index or individual time points </li>
+<li><strong>block_sample:</strong>  whether dataset returns time-contiguous trials for each index or individual time points </li>
 <li><strong>device:</strong>  device to put the tensors on</li>
 <li><strong>preload:</strong>  whether to load all data into memory at once</li>
 <li><strong>includeMUs:</strong>  whether to include MUs in the dataset</li>
@@ -2108,7 +2108,7 @@ Note: assumes that this is getting a dictionary, of course</p>
                                 <dd id="MultiDataset.datadir" class="variable"><a href="../sensory_base.html#SensoryBase.datadir">datadir</a></dd>
                 <dd id="MultiDataset.filenames" class="variable"><a href="../sensory_base.html#SensoryBase.filenames">filenames</a></dd>
                 <dd id="MultiDataset.device" class="variable"><a href="../sensory_base.html#SensoryBase.device">device</a></dd>
-                <dd id="MultiDataset.trial_sample" class="variable"><a href="../sensory_base.html#SensoryBase.trial_sample">trial_sample</a></dd>
+                <dd id="MultiDataset.block_sample" class="variable"><a href="../sensory_base.html#SensoryBase.block_sample">block_sample</a></dd>
                 <dd id="MultiDataset.num_lags" class="variable"><a href="../sensory_base.html#SensoryBase.num_lags">num_lags</a></dd>
                 <dd id="MultiDataset.time_embed" class="variable"><a href="../sensory_base.html#SensoryBase.time_embed">time_embed</a></dd>
                 <dd id="MultiDataset.preload" class="variable"><a href="../sensory_base.html#SensoryBase.preload">preload</a></dd>
