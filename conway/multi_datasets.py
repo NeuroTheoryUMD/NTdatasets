@@ -363,8 +363,11 @@ class MultiClouds(SensoryBase):
         #self.ETtraceHR = np.array(f['ETtrace_raw'], dtype=np.float32)
 
         # To use with integrated eye tracking
-        plexon_trial_times = np.array(f['trial_start_ts'], dtype=np.float32)
-
+        if 'trial_start_ts' in f:
+            plexon_trial_times = np.array(f['trial_start_ts'], dtype=np.float32)
+        else:
+            plexon_trial_times = None
+            
         # Binocular information
         Lpresent = np.array(f['useLeye'], dtype=int)[:,0]
         Rpresent = np.array(f['useReye'], dtype=int)[:,0]
@@ -1151,7 +1154,6 @@ class MultiClouds(SensoryBase):
                         newstim[:, eindx, ...] = self.shift_stim( 
                             newstim[:, eindx, ...], eyepos[:,:,ee], batch_size=batch_sz)
                     else:
-                        print(ee, eyepos[:5,0,ee])
                         newstim[:, eindx, ...] = self.shift_stim(
                             newstim[:, eindx, ...], eyepos[:,:,ee])
 
