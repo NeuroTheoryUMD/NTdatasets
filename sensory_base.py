@@ -260,7 +260,7 @@ class SensoryBase(Dataset):
             None
         """
 
-        assert self.block_inds is not None, "Need block_inds defined as an internal variable"
+        assert len(self.block_inds) > 0, "Need block_inds defined as an internal variable"
 
         if block_anchors is None:
             NBL = len(self.block_inds)
@@ -346,7 +346,34 @@ class SensoryBase(Dataset):
             psths = np.divide( psths, np.maximum(df_count, 1.0) )
 
         return psths
-    # END SensoryBase.calculate_psths()
+    # END SensoryBase.trial_psths()
+
+    def trial_averaged_rates( self, with_nans=False, valid_output=False, threshold_fraction=0.2 ):
+        """
+        Compute trial-averaged firing rate
+        """
+        num_trials = len(self.block_inds)
+        assert num_trials > 0, "Need defined block indices first"
+
+        # Should be fine with memory to just output valid data
+        dfs = self[:]['dfs'].cpu().detach().numpy()
+        robs = self[:]['robs'].cpu().detach().numpy()
+
+        Ravs = np.zeros([num_trials, self.NC])
+        val_data = np.zeros([num_trials, self.NC])
+        for tt in range(num_trials):
+            NTs = np.sum(dfs[self.block_inds[tt], :], axis=0)
+            Nspks = np.sum(
+                dfs[self.block_inds[tt], :] * robs[self.block_inds[tt], :], axis=0)
+            val_data[tt, :] = NTs*threshold_fraction >= len(self.block_inds[tt])
+            Ravs[tt,:] = np.divide(Nspks, np.maximum(NTs, 1))
+            if with_nans:
+                Ravs[tt, ~val_data[tt,:]] = np.nan
+        if valid_output:
+            return Ravs, val_data
+        else:
+            return Ravs
+    # END trial_averaged_rates()
 
     def construct_LVtents( self, tent_spacing=12 ):
         """
@@ -899,7 +926,7 @@ class SensoryBase(Dataset):
                 step = 1
             return np.arange(start,stop, step)
         elif SensoryBase.is_int(index):
-            return [index]
+            return np.array(index, dtype=np.int64)
         elif isinstance(index, list):
             return np.array(index, dtype=np.int64)
         return index

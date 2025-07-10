@@ -165,6 +165,11 @@ class MultiClouds(SensoryBase):
         #self.cells_out = []  # can be list to output specific cells in get_item
         #self.avRs = None
 
+        # Scrub filenames of 'mat' if needed
+        for ii in range(len(filenames)):
+            loc = filenames[ii].find('.')
+            if loc > 0:
+                filenames[ii] = filenames[ii][:loc]
         self.fhandles = [h5py.File(os.path.join(datadir, sess + '.mat'), 'r') for sess in self.filenames]
         self.file_info = [None] * self.Nexpts
         self.exptNT = np.zeros(self.Nexpts, dtype=np.int64)  # used to be fileNT
@@ -367,7 +372,7 @@ class MultiClouds(SensoryBase):
             plexon_trial_times = np.array(f['trial_start_ts'], dtype=np.float32)
         else:
             plexon_trial_times = None
-            
+
         # Binocular information
         Lpresent = np.array(f['useLeye'], dtype=int)[:,0]
         Rpresent = np.array(f['useReye'], dtype=int)[:,0]
@@ -924,6 +929,7 @@ class MultiClouds(SensoryBase):
             if which_stim == 0:
                 print( "Stim #%d: using ET stimulus"%expt_n )
                 stim_tmp = np.array(self.fhandles[expt_n]['stimET'], dtype=np.int8)
+                assert len(stim_tmp > 0), "No ET stimulus in this dataset"
                 #self.stim_pos = self.stim_locationET[:,0]
                 stim_pos = locsET[:,0]  # take first one -- should use other approach if many
             else:
