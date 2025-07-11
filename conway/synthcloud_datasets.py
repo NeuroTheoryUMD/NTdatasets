@@ -228,6 +228,10 @@ class SimCloudData(SensoryBase):
     def __getitem__(self, index):
         #N_blocks = self.block_inds[index,:].shape[0]
         #index = self.block_inds[index,:].flatten()
+        if type(index) == int:
+            index = np.array([index])
+        else:
+            index = np.array(index)
         index = self.index_to_array(index, len(self.block_inds))
         N_blocks = len(index)
         ts = self.block_inds[index[0]]
