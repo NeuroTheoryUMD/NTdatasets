@@ -212,13 +212,15 @@ class SimCloudData(SensoryBase):
         for ii in range(self.NB):
             self.block_inds[ii] = np.arange(ii*self.block_len, (ii+1)*self.block_len)
 
-        self.train_blks = np.arange((self.NB//5)*4, dtype=np.int64)
-        self.val_blks = np.arange((self.NB//5)*4, self.NB, dtype=np.int64)
-        Tdivider = self.val_blks[0]*self.block_len
-        self.train_inds = np.arange(Tdivider)
-        self.val_inds = np.arange(Tdivider, self.NT)
-        # this would be the best way to do cross-val, but ok with sim
-        #self.crossval_setup(folds=5, random_gen=False, test_set=False, verbose=False)
+        # LAST 1/5 OF DATA SPLIT
+        #self.train_blks = np.arange((self.NB//5)*4, dtype=np.int64)
+        #self.val_blks = np.arange((self.NB//5)*4, self.NB, dtype=np.int64)
+        #Tdivider = self.val_blks[0]*self.block_len
+        #self.train_inds = np.arange(Tdivider)
+        #self.val_inds = np.arange(Tdivider, self.NT)
+
+        # 5 FOLD DATA SPLIT
+        self.crossval_setup(folds=5, random_gen=False, test_set=False, verbose=False)
     
         # Generate mu0 values from RF positions
         pxl_x_pos, pxl_y_pos = deg2pxl(x_pos, y_pos, L, down_sample=down_sample)
@@ -230,6 +232,8 @@ class SimCloudData(SensoryBase):
         #index = self.block_inds[index,:].flatten()
         if type(index) == int:
             index = np.array([index])
+        elif type(index) == slice:
+            index = index
         else:
             index = np.array(index)
         index = self.index_to_array(index, len(self.block_inds))
