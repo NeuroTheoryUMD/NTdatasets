@@ -346,9 +346,17 @@ class MultiClouds(SensoryBase):
         stim_locsLP = np.array(f['stim_location'], dtype=np.int64),
 
         if len(stim_locsLP) == 1: # then list of arrays for some reason
-            print('  FILE_INFO: stim_locsLP list again -- ok but output check')
+            #print('  FILE_INFO: stim_locsLP list again -- ok but output check')
             stim_locsLP = stim_locsLP[0]
         stim_locsET = np.array(f['ETstim_location'], dtype=np.int64)
+        # Check validity 
+        if stim_locsLP[0,0] == stim_locsLP[2,0]:
+            print( "Warning: invalid stim-location info: will assume size 60 and resize.")
+            stim_locsLP[2,:] = stim_locsLP[0,:] + 60
+            stim_locsLP[3,:] = stim_locsLP[1,:] + 60
+        if stim_locsET[0,0] == stim_locsET[2,0]:
+            stim_locsET[2,:] = stim_locsET[0,:] + 60
+            stim_locsET[3,:] = stim_locsET[1,:] + 60
 
         if 'stim_location_deltas' in f:
             stim_location_deltas = np.array(f['stim_location_deltas'], dtype=np.int64).T
@@ -1504,8 +1512,8 @@ class MultiClouds(SensoryBase):
     # END .avrates()
 
     def compute_LLsNULL( 
-            self, drift_terms=None, val_inds=None, Dreg=0.1, bias_only=False, 
-            speckledXV=False, to_return=None ):
+            self, drift_terms=None, data_inds=None, Dreg=0.1, bias_only=False, 
+            speckledXV=False, to_output=None ):
         """
         This should be moved to SensoryBase as soon as it works
         Assembles models based on the drift terms and evaluates. If no drift terms are 
@@ -1515,11 +1523,11 @@ class MultiClouds(SensoryBase):
         Args:
             drift_terms: the drift terms for all the models: should match the size of Xdrift. 
                 If None (default) then it will first fit the drift models using Dreg value
-            val_inds: inds of data to use for LL calculation. If None (default) will use what is specified in dataset
+            data_inds: inds of data to use for LL calculation. If None (default) will use what is specified in dataset
             Dreg: drift_regularization to use if fitting models. Will be entered for model, but not used
             bias_only: if want to fit the bias but not the drift term itself
             speckledXV: whether to use speckled XV (alternative to val_inds: default False)
-            to_return: whether to return additional info than just LLsNULL: can be 'model', or 'weights' or 'ws'
+            to_output: whether to return additional info than just LLsNULL: can be 'model', or 'weights' or 'ws'
 
         Returns:
             LLs: null-likelihood calculated on val_inds
@@ -1536,6 +1544,7 @@ class MultiClouds(SensoryBase):
             assert NA == NAd, "Size of drift terms does not match: NA %d %d"%(NA, NAd)
             assert NC == NCd, "Size of drift terms does not match: NC %d %d"%(NC, NCd)
 
+        val_inds = data_inds
         if speckledXV:
             assert val_inds is None, "Should not have val_inds when speckled."
         else:            
@@ -1574,16 +1583,16 @@ class MultiClouds(SensoryBase):
         else:
             LLs = drift_pop.eval_models(self[val_inds], null_adjusted=False)
 
-        if to_return is None:
+        if to_output is None:
             return LLs
-        if to_return in ['model', 'mod']:
+        if to_output in ['model', 'mod']:
             return LLs, drift_pop
-        elif to_return in ['ws', 'weights', 'weight']:
+        elif to_output in ['ws', 'weights', 'weight']:
             bs = drift_pop.networks[0].layers[0].bias.detach().cpu().numpy()
             ws = drift_pop.get_weights() + bs[None, :]
             return LLs, ws
         else:
-            print("Could not identify 'to_return' argumeent. Can be: 'model', 'weights'" )
+            print("Could not identify 'to_output' argument. Can be: 'model', 'weights'" )
             return LLs
     # END MultiClouds.compute_LLsNULL
 

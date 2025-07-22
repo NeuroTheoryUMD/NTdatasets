@@ -404,7 +404,7 @@ class SimCloudDataIF(Dataset):
         self.val_blks = np.arange((self.NB//5)*4, self.NB, dtype=np.int64)
 
         self.num_lags = num_lags
-        self.dfs = np.ones(self.robs.shape)
+        self.dfs = np.ones(self.robs.shape, dtype=np.float32)
         for i in range(len(file_start_pos)):
             j = file_start_pos[i]
             self.dfs[j:j+self.num_lags,:] = 0

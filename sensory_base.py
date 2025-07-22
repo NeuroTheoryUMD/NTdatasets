@@ -279,7 +279,7 @@ class SensoryBase(Dataset):
             self.design_matrix_drift(self.NT, anchors, zero_left=False,
                                      zero_right=zero_right, const_right=True),
             dtype=torch.float32)
-    # END SenspryBase.construct_drift_design_matrix()
+    # END SensoryBase.construct_drift_design_matrix()
 
     def trial_psths( self, trials=None, R=None, trial_size=None, ignore_dfs=True, verbose=False ):
         """
@@ -926,7 +926,7 @@ class SensoryBase(Dataset):
                 step = 1
             return np.arange(start,stop, step)
         elif SensoryBase.is_int(index):
-            return np.array(index, dtype=np.int64)
+            return np.array([index], dtype=np.int64)
         elif isinstance(index, list):
             return np.array(index, dtype=np.int64)
         return index
