@@ -129,7 +129,7 @@ class MultiClouds(SensoryBase):
         self.generate_Xfix = False
         self.output_separate_eye_stim = False
         self.expt_stims = [None]*self.Nexpts
-        self.L = None
+        self.L = 60
         self.LMS = LMS
         
         self.start_t = 0
@@ -295,6 +295,8 @@ class MultiClouds(SensoryBase):
 
         ### Set up train, val and test inds and blks
         self.crossval_setup(test_set=test_set, verbose=True)
+        ### Build trivial stim so data can be accessed...
+        self.assemble_stim( trivial_stim=True )
     # END MultiClouds.__init__
 
     def read_file_info( self, file_n, filename ):
@@ -562,7 +564,11 @@ class MultiClouds(SensoryBase):
         print('  Redoing cross-validation indices')
         self.crossval_setup()
         if len(self.stim) > 0:
-            print( "WARNING: will need to rebuild the stimulus." )
+            # Check if trivial_stim (then just resize)
+            if np.sum(abs(self.stim)) == 0:
+                self.stim = np.zeros( [self.NT, np.prod(self.stim_dims)], dtype=np.int8 )
+            else:
+                print( "WARNING: will need to rebuild the stimulus." )
     # END MultiClouds.modify_expt_time_range()
 
     def expt_membership(self, ccs):
@@ -1208,10 +1214,14 @@ class MultiClouds(SensoryBase):
         print( "  Done: expt", expt_n )
     # END MultiClouds.build_stim()
 
-    def assemble_stim( self ):
+    def assemble_stim( self, trivial_stim=False ):
         """
-        Assemble stimulus from all experiments into self.stim
+        Assemble stimulus from all experiments into self.stim. If trivial_stim = True, will
+        just generate zeros at the right size 
 
+        Args: 
+            trivial_stim: whether to build stim-shell (zeros) to allow __get_item__ to work
+            
         Returns:
             None
         """
@@ -1225,6 +1235,10 @@ class MultiClouds(SensoryBase):
             self.stim_dims[3] = self.num_lags
         num_dims = np.prod(self.stim_dims)
         self.stim = np.zeros( [self.NT, num_dims], dtype=np.int8 )
+        
+        # Exit to build a trivial stim
+        if trivial_stim:  return
+
         for ff in range(self.Nexpts):
             assert self.expt_stims[ff] is not None, 'ASSEMBLE_STIM: stim %d is not yet built.'%ff  
             trange = range(self.expt_tstart[ff], self.expt_tstart[ff]+self.exptNT[ff])
