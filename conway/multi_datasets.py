@@ -1431,11 +1431,10 @@ class MultiClouds(SensoryBase):
         ax.set_aspect('equal', adjustable='box')
         plt.xlim([x0-BUF,x1+BUF])
         plt.ylim([y0-BUF,y1+BUF])
-        print(x0-BUF,x1+BUF, y0-BUF,y1+BUF)
         plt.show()
     # END MultiClouds.draw_stim_locations()
     
-    def fixation_restrict( self, ETmetrics, expt_n=None, thresh=0.9, reset_dfs=True ):
+    def fixation_restrict( self, ETmetrics, expt_n=None, thresh=0.9, reset_dfs=True, modify_dfs=True ):
         """
         Modifies data_filters with valid fixation data. For now, would need 
         to re-run assemble_robs. ETmetrics can be for all experiments (if list), or just one
@@ -1449,6 +1448,8 @@ class MultiClouds(SensoryBase):
             thresh: metric threshold (between 0.8-1, default=0.9), with lower corresponding to better qual
             reset_dfs: whether to rebuild DFs from files and then restrict (for example, in case 
                 previous restriction was in place and want to be more permissive)
+            modify_dfs: whether to modify self.dfs with the valid fixations. If False, will just print
+                output a single dimension marking valid time points that can be multipled by DFs 
 
         Returns:
             None, but modifies self.dfs accordingly
@@ -1488,10 +1489,12 @@ class MultiClouds(SensoryBase):
                 if val_transitions[jj+1]-val_transitions[jj] < 4:
                     if val_fix[val_transitions[jj]+1] > 0:
                         val_fix[val_transitions[jj]:(val_transitions[jj+1]+1)] = 0
-
-            df_tslice[:, crange] *= val_fix
-            self.dfs[trange, :] = deepcopy(df_tslice)
-    # END MultiClouds.valid_fixations()
+            if modify_dfs:
+                df_tslice[:, crange] *= val_fix
+                self.dfs[trange, :] = deepcopy(df_tslice)
+            else: 
+                return val_fix.squeeze()
+    # END MultiClouds.fixation_restrict()
 
     def avrates( self, inds=None ):
         """
@@ -1818,7 +1821,7 @@ class MultiClouds(SensoryBase):
             'ts': torch.tensor(np.arange(stim.shape[0]), dtype=torch.int64),  # keep track of indices for remapping
             'stim': torch.tensor(stim, dtype=torch.float32),
             'eyepos': torch.tensor(eyepos, dtype=torch.float32)*Lscale }
-        print(batch_size, stim.shape)
+        
         ds = GenericDataset(stim_data, device=None)
         #ds.covariates['stim'] = ds.covariates['stim'].flatten(start_dim=1)
         #dl = DataLoader(ds, batch_size=batch_size, shuffle=False, num_workers=os.cpu_count()//2)
