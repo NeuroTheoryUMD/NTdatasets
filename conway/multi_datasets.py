@@ -924,7 +924,6 @@ class MultiClouds(SensoryBase):
         if eyepos is not None:  # make sure empty list is same as None
             if len(eyepos) == 0:
                 eyepos = None
-
         need2crop = False
         if LMS:
             assert not self.luminance_only, "Cannot convert color spaces if luminance-only."

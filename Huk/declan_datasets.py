@@ -21,6 +21,7 @@ class DeclanSampleData(SensoryBase):
             combined_stim=False, 
             nspk_cutoff=500,
             drift_interval=60,
+            trange = None,
             **kwargs):
         """
         Args:
@@ -29,6 +30,7 @@ class DeclanSampleData(SensoryBase):
             combined_stim: whether to combine direction and frequency info into single one-hot category (def: False)
             nspk_cutoff: initial quality criteria, not including neurons with less than this number of spikes
             drift_interval: anchor spacing for drift model
+            trange: time range to limit the data over (default: None)
             **kwargs: additional arguments to pass to the parent class
         """
         assert filename is not None, "Must specify filename."
@@ -47,27 +49,42 @@ class DeclanSampleData(SensoryBase):
         self.RunSpeed = matdat['RunSpeed'].squeeze().astype(np.float32)
         self.SacMag = matdat['SacMag'].squeeze().astype(np.float32)
         self.SacRate = matdat['SacRate'].squeeze().astype(np.float32)
-        
         self.NT = len(self.StimSF)
         self.NC = robs_raw.shape[1]
+        if trange is None:
+            self.trange = [0, self.NT]
+        else:
+            if not (isinstance(trange, np.ndarray) or isinstance(trange, list)):
+                trange = [trange]
+            if len(trange) == 1:
+                self.trange = [trange[0], self.NT]
+            else:
+                assert len(trange) == 2, "trange must be length 1 or 2."
+                self.trange = [trange[0], trange[1]]
+
+        robs_raw = robs_raw[range(self.trange[0], self.trange[1]), :]
+
+        if 'DataFilter' in matdat:
+            dfs = np.array( matdat['DataFilter'][range(self.trange[0], self.trange[1]), :], dtype=np.float32)
+        else:
+            dfs = np.ones([self.trange[1]-self.trange[0], self.NC], dtype=np.float32)  
+            print('WARNING: No datafilter included in dataset.')
 
         # Rudimentary unit filtering
         if nspk_cutoff is not None:
-            self.kept_cells = np.where(np.sum(robs_raw, axis=0) > nspk_cutoff)[0]
+            self.kept_cells = np.where(np.sum(robs_raw*dfs, axis=0) > nspk_cutoff)[0]
             print("Applying %d-spike cutoff: %d/%d cells remain."%(nspk_cutoff, len(self.kept_cells), self.NC))
             self.NC = len(self.kept_cells)
         else:
             self.kept_cells = np.arange(self.NC)
 
         self.robs = torch.tensor( robs_raw[:, self.kept_cells], dtype=torch.float32 )
-        self.dfs = torch.ones([self.NT, self.NC], dtype=torch.float32)  # currently no datafilters in dataset
-
-        # Assign cross-validation
-        Xt = np.arange(2, self.NT, 5, dtype='int64')
+        self.dfs = torch.tensor( dfs[:, self.kept_cells], dtype=torch.float32 )
+        #self.dfs = torch.ones([self.NT, self.NC], dtype=torch.float32)  # currently no datafilters in dataset
+        
+        # Assign cross-validation -- this is interspersed so wont be affected by change in trange
+        Xt = np.arange(2, self.NT, 5, dtype='int64') 
         Ut = np.array(list(set(np.arange(self.NT, dtype='int64'))-set(Xt)))
-
-        self.train_inds = Ut
-        self.val_inds = Xt
 
         ##### Additional Stim processing #####
         self.stimDs = torch.tensor( self.construct_onehot_design_matrix(self.StimDir), dtype=torch.float32 )
@@ -86,6 +103,18 @@ class DeclanSampleData(SensoryBase):
         else:
             self.stim = self.stimDs
             self.stim_dims = [1, NDIR, 1, 1]  # put directions in space
+
+        # Modify all relevant variables the bone-headed way with trange
+        ts = np.arange(self.trange[0], self.trange[1], dtype='int64')
+        self.stim = self.stim[ts, :]
+        self.stimFs = self.stimFs[ts, :]
+        self.stimDs = self.stimDs[ts, :]
+        #self.robs = self.robs[ts, :] # already done with robs_raw
+        # self.dfs = self.dfs[ts, :]
+
+        self.NT = len(ts)
+        self.train_inds = Ut[Ut < self.NT]
+        self.val_inds = Xt[Xt < self.NT]
 
         # Make drift matrix
         drift_anchors = np.arange(0, self.NT, drift_interval)
