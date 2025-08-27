@@ -478,7 +478,8 @@ class MultiClouds(SensoryBase):
 
     def modify_included_cells(self, clists, expt_n=None, reset_cell_lists=False):
         """
-        Modify the included cells in the dataset
+        Modify the included cells in the dataset, by updating all relevant variables, including 
+        self.cranges and self.exptNC, and then reassembles robs and dfs using assemble_robs
 
         Args:
             clists (list): list of lists of cell indices to include in the dataset
@@ -784,7 +785,8 @@ class MultiClouds(SensoryBase):
         
     def updateDF( self, dfs=None, expt_n=0, reduce_cells=False ):
         """
-        Import updated DF for given experiment, as numbered (can see with 'list_expts')
+        Update the datafilter for given experiment in the multi-experiment self,dfs, using the 
+        passed in dfs. [Will only work for one experiment at a time, as numbered.
         Will check for neurons with no spikes and reduce robs and dataset if reduce_cells=True
         
         Args:
@@ -1015,7 +1017,7 @@ class MultiClouds(SensoryBase):
             locsET = self.file_info[expt_n]['stim_locsET']
             stimLP_base = np.array(self.fhandles[expt_n]['stim'][self.tranges[expt_n], ...], dtype=np.int8)
             locsLP = self.file_info[expt_n]['stim_locsLP']
-            fhandle = self.fhandles[expt_n]
+            #fhandle = self.fhandles[expt_n]
             #sz = fhandle['stim'].shape
             #inds = np.arange(sz[0], dtype=np.int64)
 
@@ -1435,8 +1437,9 @@ class MultiClouds(SensoryBase):
     
     def fixation_restrict( self, ETmetrics, expt_n=None, thresh=0.9, reset_dfs=True, modify_dfs=True ):
         """
-        Modifies data_filters with valid fixation data. For now, would need 
-        to re-run assemble_robs. ETmetrics can be for all experiments (if list), or just one
+        Computes a variable val_fix based on whether ETmetrics is <= thresh. 
+        If modify_dfs is True, it modifies the existing DFs, and otherwise just returns val_fix. 
+        reset_dfs starts from recalcated dfs from files (modified by cranges and tranges)
 
         Args: 
             ETmetrics: array that is length of trange[ee]. This metric that is best correlated 
@@ -1451,7 +1454,8 @@ class MultiClouds(SensoryBase):
                 output a single dimension marking valid time points that can be multipled by DFs 
 
         Returns:
-            None, but modifies self.dfs accordingly
+            val_fix (if modify_dfs is False): (NTx1 uint8 array) designating valid fixation data 
+            None (if modify_dfs is True), but modifies self.dfs accordingly
         """
 
         # First make sure that getting a list of experiments with matching list of ETmetrics
@@ -1460,6 +1464,7 @@ class MultiClouds(SensoryBase):
             assert len(ETmetrics) == self.Nexpts, "ETmetrics list is wrong length"
             expt_n = np.arange(self.Nexpts)
         else:
+            assert ETmetrics.ndim == 1, "ETmetrics should be a single array if not a list"
             ETmetrics = [ETmetrics]
             if self.Nexpts == 1:
                 expt_n = [0]
