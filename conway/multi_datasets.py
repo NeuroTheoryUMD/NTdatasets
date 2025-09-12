@@ -1558,7 +1558,10 @@ class MultiClouds(SensoryBase):
         from NDNT.NDN import NDN
         from NDNT.utils import fit_lbfgs
 
-        NC = self.NC
+        #NC = self.NC
+        NC = len(self.cells_out)
+        if NC == 0:
+            NC = self.NC
         NT, NA = self.Xdrift.shape
         if drift_terms is not None:
             NAd, NCd = drift_terms.shape
