@@ -350,7 +350,15 @@ class SensoryBase(Dataset):
 
     def trial_averaged_rates( self, with_nans=False, valid_output=False, threshold_fraction=0.2 ):
         """
-        Compute trial-averaged firing rate
+        Compute trial-averaged firing rate. 
+
+        Args:  ### NEED TO EDIT -- this is AI talking...
+            with_nans: whether to return nans for invalid data (default False)
+            valid_output: whether to return valid data boolean array (default False)
+            threshold_fraction: the fraction of time points that must be valid to consider valid data (default 0.2)
+        Returns:
+            Ravs: the trial-averaged firing rates
+            val_data: boolean array indicating whether data is valid (if valid_output is True)
         """
         num_trials = len(self.block_inds)
         assert num_trials > 0, "Need defined block indices first"
