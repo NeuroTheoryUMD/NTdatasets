@@ -20,7 +20,10 @@ class DeclanSampleData(SensoryBase):
             self, filename=None, datadir='', 
             combined_stim=False, 
             nspk_cutoff=500,
+            stability_cutoff=0.5,
+            fr_cutoff = 1.0,  # firing rate cutoff = 1 Hz
             drift_interval=60,
+            ignore_temporal_freq=False,
             trange = None,
             **kwargs):
         """
@@ -30,6 +33,7 @@ class DeclanSampleData(SensoryBase):
             combined_stim: whether to combine direction and frequency info into single one-hot category (def: False)
             nspk_cutoff: initial quality criteria, not including neurons with less than this number of spikes
             drift_interval: anchor spacing for drift model
+            ignore_temporal_freq: whether to ignore temporal frequency when constructing frequency categories (def: False)
             trange: time range to limit the data over (default: None)
             **kwargs: additional arguments to pass to the parent class
         """
@@ -51,6 +55,15 @@ class DeclanSampleData(SensoryBase):
         self.SacRate = matdat['SacRate'].squeeze().astype(np.float32)
         self.NT = len(self.StimSF)
         self.NC = robs_raw.shape[1]
+        if 'Depths' in matdat:
+            self.depths = matdat['Depths'].squeeze().astype(np.float32)
+        else:
+            self.depths = np.zeros(self.NC)
+        if 'RF_eccent' in matdat:
+            self.eccentricities = matdat['RF_eccent'].squeeze().astype(np.float32)
+        else:
+            self.eccentricities = np.zeros(self.NC)
+
         if trange is None:
             self.trange = [0, self.NT]
         else:
@@ -63,6 +76,8 @@ class DeclanSampleData(SensoryBase):
                 self.trange = [trange[0], trange[1]]
 
         robs_raw = robs_raw[range(self.trange[0], self.trange[1]), :]
+        self.RunSpeed = self.RunSpeed[range(self.trange[0], self.trange[1])]
+        self.EyeVar = self.EyeVar[range(self.trange[0], self.trange[1])]
 
         if 'DataFilter' in matdat:
             dfs = np.array( matdat['DataFilter'][range(self.trange[0], self.trange[1]), :], dtype=np.float32)
@@ -73,13 +88,28 @@ class DeclanSampleData(SensoryBase):
         # Rudimentary unit filtering
         if nspk_cutoff is not None:
             self.kept_cells = np.where(np.sum(robs_raw*dfs, axis=0) > nspk_cutoff)[0]
-            print("Applying %d-spike cutoff: %d/%d cells remain."%(nspk_cutoff, len(self.kept_cells), self.NC))
-            self.NC = len(self.kept_cells)
         else:
             self.kept_cells = np.arange(self.NC)
+        if fr_cutoff is not None:
+            mean_rates = np.sum(robs_raw*dfs, axis=0) / np.maximum((np.sum(dfs, axis=0)*2), 1.0)  # in Hz (2 sec trials?)
+            self.kept_cells = np.array( list(set(self.kept_cells).intersection(set(np.where(mean_rates > fr_cutoff)[0]))) )
+
+        if stability_cutoff is not None:
+            NT = robs_raw.shape[0]
+            n1s = np.sum(robs_raw[0:NT//2, :], axis=0)
+            n2s = np.sum(robs_raw[NT//2:, :], axis=0)
+            stab = abs(n1s - n2s) / np.maximum(0.5*(n1s+n2s), 1.0)
+            self.kept_cells2 = np.where(stab < stability_cutoff)[0]
+            self.kept_cells = np.array( list(set(self.kept_cells).intersection(set(self.kept_cells2))) )
+
+        if stability_cutoff is not None or nspk_cutoff is not None:
+            print("Applying %d-spike cutoff: %d/%d cells remain."%(nspk_cutoff, len(self.kept_cells), self.NC))
+        self.NC = len(self.kept_cells)
 
         self.robs = torch.tensor( robs_raw[:, self.kept_cells], dtype=torch.float32 )
         self.dfs = torch.tensor( dfs[:, self.kept_cells], dtype=torch.float32 )
+        self.eccentricities = self.eccentricities[self.kept_cells]
+        self.depths = self.depths[self.kept_cells]
         #self.dfs = torch.ones([self.NT, self.NC], dtype=torch.float32)  # currently no datafilters in dataset
         
         # Assign cross-validation -- this is interspersed so wont be affected by change in trange
@@ -90,15 +120,24 @@ class DeclanSampleData(SensoryBase):
         self.stimDs = torch.tensor( self.construct_onehot_design_matrix(self.StimDir), dtype=torch.float32 )
         NDIR = self.stimDs.shape[1]
         
-        binTF = np.log2(self.StimTF).astype(int)
-        binSF = (self.StimSF-1).astype(int)
-        Fcat = binSF*3 + binTF  # note this give 0 1 4 5
-        Fcat[Fcat > 2] += -2  # now categories 0 1 (SF=0, TF=0,1) and 2 3 (SF=1, TF=1,2)
-        self.stimFs = torch.tensor( self.construct_onehot_design_matrix(Fcat), dtype=torch.float32 )
+        #binTF = np.log2(self.StimTF).astype(int)
+        #binSF = (self.StimSF-1).astype(int)
+        if ignore_temporal_freq:
+            #catFs = self.StimSF.astype(int)
+            catFs = self.StimSF.astype(int)
+        else:
+            catFs = (self.StimSF*10 + self.StimTF).astype(int)
+        self.FRQlist = np.unique(catFs)
+        NFS = len(self.FRQlist)
+        if NFS > 4:
+            print("WARNING: More than 4 frequency categories detected.")
+        #Fcat = binSF*3 + binTF  # note this give 0 1 4 5
+        #Fcat[Fcat > 2] += -2  # now categories 0 1 (SF=0, TF=0,1) and 2 3 (SF=1, TF=1,2)
+        self.stimFs = torch.tensor( self.construct_onehot_design_matrix(catFs), dtype=torch.float32 )
         NFS = self.stimFs.shape[1]
 
         if combined_stim:
-            self.stim = torch.einsum('ta,tb->tab', self.stimFs, self.stimDs ).reshape([-1, 48])
+            self.stim = torch.einsum('ta,tb->tab', self.stimFs, self.stimDs ).reshape([-1, NDIR*NFS])
             self.stim_dims = [NFS, NDIR, 1, 1]  # put directions in space
         else:
             self.stim = self.stimDs
@@ -148,7 +187,10 @@ class DeclanSampleData(SensoryBase):
                 M2tmp = self.Mtrn[:, self.cells_out]
                 out['Mval'] = M1tmp[idx, :]
                 out['Mtrn'] = M2tmp[idx, :]
-            
+        
+        if self.stim_dims[0] > 1:
+            out['stimDs'] = self.stimDs[idx, :]
+
         if self.Xdrift is not None:
             out['Xdrift'] = self.Xdrift[idx, :]
 
