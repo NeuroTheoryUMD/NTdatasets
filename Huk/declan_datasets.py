@@ -92,12 +92,13 @@ class DeclanSampleData(SensoryBase):
             self.kept_cells = np.arange(self.NC)
         if fr_cutoff is not None:
             mean_rates = np.sum(robs_raw*dfs, axis=0) / np.maximum((np.sum(dfs, axis=0)*2), 1.0)  # in Hz (2 sec trials?)
-            self.kept_cells = np.array( list(set(self.kept_cells).intersection(set(np.where(mean_rates > fr_cutoff)[0]))) )
+            self.kept_cells = np.array( list(set(self.kept_cells).intersection(
+                set(np.where(mean_rates > fr_cutoff)[0]))) )
 
         if stability_cutoff is not None:
             NT = robs_raw.shape[0]
-            n1s = np.sum(robs_raw[0:NT//2, :], axis=0)
-            n2s = np.sum(robs_raw[NT//2:, :], axis=0)
+            n1s = np.sum(robs_raw[0:NT//2, :], axis=0) / np.maximum( np.sum(dfs[0:NT//2, :], axis=0), 1.0)  
+            n2s = np.sum(robs_raw[NT//2:, :], axis=0) / np.maximum( np.sum(dfs[NT//2:, :], axis=0), 1.0)    
             stab = abs(n1s - n2s) / np.maximum(0.5*(n1s+n2s), 1.0)
             self.kept_cells2 = np.where(stab < stability_cutoff)[0]
             self.kept_cells = np.array( list(set(self.kept_cells).intersection(set(self.kept_cells2))) )
