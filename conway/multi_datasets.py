@@ -14,41 +14,6 @@ from NTdatasets.sensory_base import SensoryBase
 from NTdatasets.generic import GenericDataset
 
 
-class MultiData( SensoryBase ):
-    """
-    Shell built on top of multi-cloud that adds automatic (and manual) data updates.
-    FOR FUTURE -- not started
-    """
-
-    def __init__(self,
-        expt_list,
-        datadir, 
-        num_lags=10, 
-        include_MUs=False,
-        drift_interval=None,
-        #trial_sample=True,
-        luminance_only=True,
-        LMS=False,
-        binocular=False, # whether to include separate filters for each eye
-        eye_config=3,  # 0 = all, 1, 2, and 3 are options (3 = binocular)
-        eye_contiguous=True, # whether to only use eye_config data that is contiguous 
-        #cell_lists = None,
-        test_set = True, # whether to include a test-set in cross-validation
-        device=torch.device('cpu')):
-
-        super().__init__(
-                filenames=expt_list, datadir=datadir, num_lags=num_lags,
-                include_MUs=include_MUs, drift_interval=drift_interval,
-                block_sample=True, luminance_only=luminance_only, LMS=LMS,
-                binocular=binocular, eye_config=eye_config, eye_contiguous=eye_contiguous, # whether to only use eye_config data that is contiguous 
-                cell_lists = None, test_set=test_set, device=device )
-        
-        # Build automatic file-read given expt_list        
-    # END MultiData.__init__()            
-    def forward(self, x):
-        return x
-    
-
 class MultiClouds(SensoryBase):
     """
     -- can load batches from multiple datasets
@@ -345,7 +310,7 @@ class MultiClouds(SensoryBase):
         fix_loc = np.array(f['fix_location'], dtype=np.int64).squeeze()
         fix_size = np.array(f['fix_size'], dtype=np.int64).squeeze()
         stim_scale = np.array(f['stimscale'], dtype=np.int64).squeeze()
-        stim_locsLP = np.array(f['stim_location'], dtype=np.int64),
+        stim_locsLP = np.array(f['stim_location'], dtype=np.int64)
 
         if len(stim_locsLP) == 1: # then list of arrays for some reason
             #print('  FILE_INFO: stim_locsLP list again -- ok but output check')
@@ -424,6 +389,14 @@ class MultiClouds(SensoryBase):
 
             # probably have to modify blockIDs -- not done yet
 
+        # Spike times and spike-ID
+        if 'spike_ts' in f:
+            spk_ts = np.array(f['spike_ts'], dtype=np.float32).squeeze()
+            spk_ids = np.array(f['spikeIDs'], dtype=np.int64).squeeze()
+        else:
+            spk_ts = None
+            spk_ids = None
+        
         return {
             'exptname': exptname,
             'NT': NT,
@@ -446,6 +419,8 @@ class MultiClouds(SensoryBase):
             'stim_locsET': stim_locsET,
             'stim_location_deltas': stim_location_deltas,
             'plexon_trial_times': plexon_trial_times,
+            'spike_ts': spk_ts,
+            'spikeIDs': spk_ids,
             'cloud_info': cloud_info}
     # END MultiClouds.read_file_info()  
 
@@ -2104,3 +2079,40 @@ class MultiClouds(SensoryBase):
 
     def __len__(self):
         return self.robs.shape[0]
+# END MultiCloud class
+
+
+class MultiData( SensoryBase ):
+    """
+    Shell built on top of multi-cloud that adds automatic (and manual) data updates.
+    FOR FUTURE -- not started
+    """
+
+    def __init__(self,
+        expt_list,
+        datadir, 
+        num_lags=10, 
+        include_MUs=False,
+        drift_interval=None,
+        #trial_sample=True,
+        luminance_only=True,
+        LMS=False,
+        binocular=False, # whether to include separate filters for each eye
+        eye_config=3,  # 0 = all, 1, 2, and 3 are options (3 = binocular)
+        eye_contiguous=True, # whether to only use eye_config data that is contiguous 
+        #cell_lists = None,
+        test_set = True, # whether to include a test-set in cross-validation
+        device=torch.device('cpu')):
+
+        super().__init__(
+                filenames=expt_list, datadir=datadir, num_lags=num_lags,
+                include_MUs=include_MUs, drift_interval=drift_interval,
+                block_sample=True, luminance_only=luminance_only, LMS=LMS,
+                binocular=binocular, eye_config=eye_config, eye_contiguous=eye_contiguous, # whether to only use eye_config data that is contiguous 
+                cell_lists = None, test_set=test_set, device=device )
+        
+        # Build automatic file-read given expt_list        
+    # END MultiData.__init__()            
+    def forward(self, x):
+        return x
+    
