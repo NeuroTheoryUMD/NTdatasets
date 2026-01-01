@@ -85,6 +85,9 @@ class MultiClouds(SensoryBase):
 
         self.Nexpts = len(filenames)
 
+        self.upsample = 1
+        self.robs_upsample = None
+
         # Stim-specific
         self.eye_config = eye_config
         self.eye_contiguous = eye_contiguous
@@ -262,6 +265,7 @@ class MultiClouds(SensoryBase):
         self.crossval_setup(test_set=test_set, verbose=True)
         ### Build trivial stim so data can be accessed...
         self.assemble_stim( trivial_stim=True )
+        self.assemble_spike_times()
     # END MultiClouds.__init__
 
     def read_file_info( self, file_n, filename ):
@@ -433,7 +437,7 @@ class MultiClouds(SensoryBase):
             trange (array): times in the experiment to include
 
         Returns:
-            e_block_inds: a list of the indices associated with each trial
+            e_block_inds: a list of the indices associated with each trial: beginning and end time (num_trials x 2)
             bmap: list of trials that were included within the experiment
         """
 
@@ -498,10 +502,11 @@ class MultiClouds(SensoryBase):
 
         Because there is an existing trange, it will have to modify, and must be specified whether
         the new trange is in absolute time (absolute_time_scale=True, default) or relative to the 
-        times currently being used (i.e., current trange) 
+        times currently being used (i.e., current trange). 
+        Note that this must be continuous: it cannot be composed of disjoint sets.
 
         Args:
-            trange: new time range of particular experiment (array of ints)
+            trange: new time range of particular experiment (array of ints giving all time points)
             expt_n: which experiment the trange-mod applies to (default=0)
             absolute_time_scale: whether trange is indexed to absolute time (default) or previous trange
 
@@ -528,6 +533,7 @@ class MultiClouds(SensoryBase):
         self.tranges[expt_n] = trange
         # self.block_ranges is modified with assemble_robs
         #self.block_ranges[expt_n] = np.arange(start_block + self.expt_blkstart[expt_n], end_block+ self.expt_blkstart[expt_n])
+
         # Recalculate NT and expt_tstarts and exptNT
         self.NT = 0
         for ee in range(self.Nexpts):
@@ -681,12 +687,20 @@ class MultiClouds(SensoryBase):
 
         tcount, ccount = 0, 0
         blkcount = 0
+
+        self.spk_ts = []
+        self.spk_ids = []
+        dt = 1.0/60 # hardcoded time resoluton of bin size relative to spike times 
+
         for ff in range(self.Nexpts):
-            #NTexpt = self.file_info[ff]['NT']
             NTexpt = len(self.tranges[ff])
-            #NSUs = self.file_info[ff]['NSUs']
-            #su_list = self.cranges[ff][self.cranges[ff] < NSUs]
             valid_data = self.file_info[ff]['valid_data']
+            if 'spike_ts' in self.file_info[ff]:
+                spk_ts_expt = deepcopy(self.file_info[ff]['spike_ts'])
+                spk_id_expt = deepcopy(self.file_info[ff]['spikeIDs'])
+            else:
+                spk_ts_expt = []
+            spk_ts_mod, spk_id_mod = [], []
 
             # Classify cell-lists in terms of SUs and MUs            
             R_tslice = np.zeros( [NTexpt, self.NC], dtype=np.int64 )
@@ -697,7 +711,6 @@ class MultiClouds(SensoryBase):
                 tslice = np.concatenate( 
                     (tslice, np.array(self.fhandles[ff]['RobsMU'], dtype=np.int64)[self.tranges[ff], :]),
                     axis=1)
-            #R_tslice[:, ccount+np.arange(len(su_list))] = deepcopy(tslice[:, su_list])
             R_tslice[:, ccount+np.arange(self.exptNC[ff])] = deepcopy(tslice[:, self.cranges[ff]])
             
             tslice = np.array(self.fhandles[ff]['datafilts'], dtype=np.uint8)[self.tranges[ff], :]
@@ -706,21 +719,8 @@ class MultiClouds(SensoryBase):
                     (tslice, np.array(self.fhandles[ff]['datafiltsMU'], dtype=np.uint8)[self.tranges[ff], :]),
                     axis=1)
             # Also take valid_data into account
-            #df_tslice[:, ccount+np.arange(len(su_list))] = deepcopy(tslice[:, su_list]) * valid_data[self.tranges[ff], None]
             df_tslice[:, ccount+np.arange(self.exptNC[ff])] = deepcopy(tslice[:, self.cranges[ff]]) * valid_data[self.tranges[ff], None]
             ccount += self.exptNC[ff] #len(su_list)
-
-            #if self.include_MUs:
-            #    NMUs = self.file_info[ff]['NMUs']
-            #    mu_list = self.cranges[ff][self.cranges[ff] >= NSUs]-NSUs
-            #    if reset_dfs:
-            #        tslice = np.array(self.fhandles[ff]['RobsMU'], dtype=np.int64)[self.tranges[ff], :]
-            #    else: 
-            #        tslice = 
-            #    R_tslice[:, ccount+np.arange(len(mu_list))] = deepcopy(tslice[:, mu_list])
-            #    tslice = np.array(self.fhandles[ff]['datafiltsMU'], dtype=np.int64)[self.tranges[ff], :]
-            #    df_tslice[:, ccount+np.arange(len(mu_list))] = deepcopy(tslice[:, mu_list]) * valid_data[self.tranges[ff], None]
-            #    ccount += len(mu_list)
 
             # Check that clipping to uint8 wont screw up any robs
             robs_ceil = np.where(R_tslice > 255)
@@ -731,24 +731,57 @@ class MultiClouds(SensoryBase):
             # Write tslice into 
             self.robs[tcount+np.arange(NTexpt), :] = deepcopy( R_tslice.astype(np.uint8) )
             self.dfs[tcount+np.arange(NTexpt), :] = deepcopy( df_tslice )
-            #self.robs[tcount+np.arange(NTslice), :] = deepcopy( R_tslice[self.tranges[ff], :].astype(np.uint8) )
-            #self.dfs[tcount+np.arange(NTslice), :] = deepcopy( df_tslice[self.tranges[ff], :] )
 
-            # Make block_inds
+            # Make block_inds -- looping through each included block
             e_block_inds, included_blocks = self.parse_trial_times_expt(ff, self.tranges[ff] )
             NBLK = e_block_inds.shape[0]
+            t_expt = 0
             for bb in range(NBLK):
                 self.block_inds.append( 
                     tcount + np.arange(e_block_inds[bb, 0], e_block_inds[bb, 1]) )
+                # redo spike times
+                a = np.where( (spk_ts_expt >= e_block_inds[bb,0]*dt) & (spk_ts_expt < e_block_inds[bb,1]*dt) )[0]
+                if len(a) > 0:
+                    # convert to time within trial
+                    ts = deepcopy(spk_ts_expt[a]) - e_block_inds[bb,0]*dt
+                    self.spk_ts = np.concatenate( (self.spk_ts, ts+tcount+t_expt), axis=0 )
+                    self.spk_ids = np.concatenate( (self.spk_ids, deepcopy(spk_id_expt[a])), axis = 0)
+                    t_expt += (e_block_inds[bb,1]-e_block_inds[bb,0])*dt
+
             self.exptNBLK[ff] = NBLK
             self.expt_blkstart[ff] = blkcount
-            self.block_ranges[ff] = included_blocks #np.arange(blkcount, blkcount+NBLK)
+            self.block_ranges[ff] = included_blocks
             blkcount += NBLK
             tcount += NTexpt
 
         self.NT = tcount
         self.trialfilter_dfs()
     # END MultiClouds.assemble_robs()
+
+    def set_upsample( self, frac ):
+        """
+        This sets upsample flag and generates a higher-time resolution Robs
+        
+        Args:
+            frac: integer amount of upsampling past frame resolution
+
+        Returns:
+            None, but modifies self.upsample and self.robs_upsample
+        """
+        assert frac >= 1, "frac must be a positive integer"
+
+        self.upsample = frac
+        if frac == 1:
+            self.robs_upsample = None
+            return
+        dt = (1.0/60)/frac
+        self.robs_upsample = np.zeros([self.NT*frac, self.NC], dtype=np.uint8 )
+        for cc in range(self.NC):
+            a = np.where(self.spk_ids == cc)[0]
+            if len(a) > 0:
+                robs_up = np.histogram( self.spk_ts[a], np.arange(self.NT*frac)*dt)[0]
+                self.robs_upsample[:, cc] = robs_up[:self.NT*frac].astype(np.unit8)
+    # END MultiClouds.set_upsample()
 
     def list_expts( self ):
         """
@@ -2004,7 +2037,12 @@ class MultiClouds(SensoryBase):
     # END .preload_numpy()
 
     def __getitem__(self, idx):
-
+        """
+        Overloaded torch.dataset function that serves the data section denoted by idx
+        If cells_out is not empty, it will use temp variables
+        Note that if upsample > 1, it will use different Robs
+        
+        """
         assert self.stim is not None, "Have to specify stimulus before pulling data."
         #if isinstance(idx, np.ndarray):
         #    idx = list(idx)
@@ -2020,13 +2058,13 @@ class MultiClouds(SensoryBase):
 
         if self.time_embed == 1:
             print("get_item time embedding not implemented yet")
-                
+ 
         if len(self.cells_out) == 0:
             out = {'stim': torch.tensor(self.stim[idx, :], dtype=torch.float32, device=self.device)/128,
                    'robs': torch.tensor(self.robs[idx, :], dtype=torch.float32, device=self.device),
                    'dfs': torch.tensor(self.dfs[idx, :], dtype=torch.float32, device=self.device)}
         else:
-            if self.robs_out is not None:
+            if (self.robs_out is not None):
                 robs_tmp = self.robs_out
                 dfs_tmp = self.dfs_out
             else:
@@ -2037,17 +2075,12 @@ class MultiClouds(SensoryBase):
             out = {'stim': torch.tensor(self.stim[idx, :], dtype=torch.float32, device=self.device)/128,
                    'robs': torch.tensor(robs_tmp[idx, :], dtype=torch.float32, device=self.device),
                    'dfs': torch.tensor(dfs_tmp[idx, :], dtype=torch.float32, device=self.device)}
-            # FIXME: we are not using fix_n at the moment
-            # if len(self.fix_n) > 0:
-            #     out['fix_n'] = self.fix_n[idx]
 
         if self.speckled:
             if len(self.cells_out) > 0:
                 if self.Mtrn_out is None:
                     self.Mval_out = self.Mval[:, self.cells_out]
                     self.Mtrn_out = self.Mtrn[:, self.cells_out]
-                    #out['Mval'] = M1tmp[idx, :]
-                    #out['Mtrn'] = M2tmp[idx, :]
                 out['Mval'] = self.Mval_out[idx, :]
                 out['Mtrn'] = self.Mtrn_out[idx, :]
             else:
@@ -2070,8 +2103,22 @@ class MultiClouds(SensoryBase):
         if len(self.covariates) > 0:
             self.append_covariates( out, idx)
      
-        return out
-    # END: MultiCloud.__get_item__
+        if self.upsample == 1:
+            return out
+        else:
+            # Index for accessing upsampled robs
+            idx_up = (np.repeat( idx[:, None]*self.upsample, self.upsample, axis=1) + np.arange(self.upsample)[None,:]).reshape([-1])
+            # upsample through repeats
+            out_up = {}
+            for kk in out.keys():
+                if kk == 'robs':
+                    if len(self.cells_out) == 0:
+                        out_up['robs'] = self.robs_upsample[idx_up, :]
+                    else:
+                        out_up['robs'] = self.robs_upsample[idx_up, :][:, self.cells_out]
+                else:
+                    out_up[kk] = torch.repeat( out[kk], self.upsample, axis=0)
+    # END: MultiCloud.__get_item__()
 
     #@property
     #def NT(self):
