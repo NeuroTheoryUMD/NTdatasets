@@ -265,7 +265,7 @@ class MultiClouds(SensoryBase):
         self.crossval_setup(test_set=test_set, verbose=True)
         ### Build trivial stim so data can be accessed...
         self.assemble_stim( trivial_stim=True )
-        self.assemble_spike_times()
+        #self.assemble_spike_times()
     # END MultiClouds.__init__
 
     def read_file_info( self, file_n, filename ):
@@ -740,13 +740,14 @@ class MultiClouds(SensoryBase):
                 self.block_inds.append( 
                     tcount + np.arange(e_block_inds[bb, 0], e_block_inds[bb, 1]) )
                 # redo spike times
-                a = np.where( (spk_ts_expt >= e_block_inds[bb,0]*dt) & (spk_ts_expt < e_block_inds[bb,1]*dt) )[0]
-                if len(a) > 0:
-                    # convert to time within trial
-                    ts = deepcopy(spk_ts_expt[a]) - e_block_inds[bb,0]*dt
-                    self.spk_ts = np.concatenate( (self.spk_ts, ts+tcount+t_expt), axis=0 )
-                    self.spk_ids = np.concatenate( (self.spk_ids, deepcopy(spk_id_expt[a])), axis = 0)
-                    t_expt += (e_block_inds[bb,1]-e_block_inds[bb,0])*dt
+                if spk_ts_expt is not None:
+                    a = np.where( (spk_ts_expt >= e_block_inds[bb,0]*dt) & (spk_ts_expt < e_block_inds[bb,1]*dt) )[0]
+                    if len(a) > 0:
+                        # convert to time within trial
+                        ts = deepcopy(spk_ts_expt[a]) - e_block_inds[bb,0]*dt
+                        self.spk_ts = np.concatenate( (self.spk_ts, ts+tcount+t_expt), axis=0 )
+                        self.spk_ids = np.concatenate( (self.spk_ids, deepcopy(spk_id_expt[a])), axis = 0)
+                        t_expt += (e_block_inds[bb,1]-e_block_inds[bb,0])*dt
 
             self.exptNBLK[ff] = NBLK
             self.expt_blkstart[ff] = blkcount
