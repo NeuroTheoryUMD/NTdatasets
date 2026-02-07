@@ -293,13 +293,13 @@ class MultiClouds(SensoryBase):
         NC = NSUs
         if self.includeMUs:
             NC += NMUs
-        channel_map = np.array(f['Robs_probe_ID'], dtype=np.int64)[0, :]
-        channel_ratings = np.array(f['Robs_rating'], dtype=np.int64).squeeze()
+        channel_map = np.array(f['Robs_probe_ID'], dtype=int)[0, :]
+        channel_ratings = np.array(f['Robs_rating'], dtype=int).squeeze()
         if (NMUs > 0) & self.includeMUs:
             channel_map = np.concatenate( 
-                (channel_map, np.array(f['RobsMU_probe_ID'], dtype=np.int64).squeeze()), axis=0)
+                (channel_map, np.array(f['RobsMU_probe_ID'], dtype=int).squeeze()), axis=0)
             channel_ratings = np.concatenate( 
-                (channel_ratings, np.array(f['RobsMU_rating'], dtype=np.int64).squeeze()), axis=0)
+                (channel_ratings, np.array(f['RobsMU_rating'], dtype=int).squeeze()), axis=0)
 
         # Block information
         blk_inds = np.array(f['block_inds'], dtype=np.int64)
@@ -311,15 +311,15 @@ class MultiClouds(SensoryBase):
         NBLK = blk_inds.shape[0]
 
         # Stim information
-        fix_loc = np.array(f['fix_location'], dtype=np.int64).squeeze()
-        fix_size = np.array(f['fix_size'], dtype=np.int64).squeeze()
-        stim_scale = np.array(f['stimscale'], dtype=np.int64).squeeze()
-        stim_locsLP = np.array(f['stim_location'], dtype=np.int64)
+        fix_loc = np.array(f['fix_location'], dtype=int).squeeze()
+        fix_size = np.array(f['fix_size'], dtype=int).squeeze()
+        stim_scale = np.array(f['stimscale'], dtype=int).squeeze()
+        stim_locsLP = np.array(f['stim_location'], dtype=int)
 
         if len(stim_locsLP) == 1: # then list of arrays for some reason
             #print('  FILE_INFO: stim_locsLP list again -- ok but output check')
             stim_locsLP = stim_locsLP[0]
-        stim_locsET = np.array(f['ETstim_location'], dtype=np.int64)
+        stim_locsET = np.array(f['ETstim_location'], dtype=int)
         # Check validity 
         if stim_locsLP[0,0] == stim_locsLP[2,0]:
             print( "Warning: invalid stim-location info: will assume size 60 and resize.")
@@ -397,6 +397,9 @@ class MultiClouds(SensoryBase):
         if 'spike_ts' in f:
             spk_ts = np.array(f['spike_ts'], dtype=np.float32).squeeze()
             spk_ids = np.array(f['spikeIDs'], dtype=np.int64).squeeze() - 1 # so corresponds to Robs
+        elif 'spk_times' in f:
+            spk_ts = np.array(f['spk_times'], dtype=np.float32).squeeze()
+            spk_ids = np.array(f['spk_IDs'], dtype=np.int64).squeeze() - 1 # so corresponds to Robs
         else:
             spk_ts = None
             spk_ids = None
@@ -783,6 +786,8 @@ class MultiClouds(SensoryBase):
         if frac == 1:
             self.robs_upsample = None
             return
+        else:
+            assert self.spk_ids is not None, "No spike time information in dataset."
         dt = (1.0/60)/frac
         self.robs_upsample = np.zeros([self.NT*frac, self.NC], dtype=np.uint8 )
         for cc in range(self.NC):
@@ -1210,7 +1215,7 @@ class MultiClouds(SensoryBase):
                 newstim = self.crop_stim( newstim, stim_crop )
             L = newstim.shape[2]
 
-        self.L = L
+        self.L = int(L)
         self.time_embed = time_embed
         #else:
         #    assert self.time_embed == time_embed, "time_embed setting must match"
