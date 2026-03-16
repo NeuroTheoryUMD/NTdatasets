@@ -21,7 +21,7 @@ class SimCloudData(SensoryBase):
         #norm_robs=False,
         cell_type_list=['V1_Exc_L4', 'V1_Inh_L4', 'V1_Exc_L2/3', 'V1_Inh_L2/3'],
         num_cells=None,
-        block_len=1000,
+        block_len=None,
         res_frac=1,
         down_sample=None,
         num_lags=12):
@@ -189,6 +189,9 @@ class SimCloudData(SensoryBase):
                 self.thetas[cell] = ori_dict['thetas'][cell][:num_cells]
                 
         #self.trial_sample = True  # happens automatically
+
+        if block_len is None:
+            block_len = 1000*self.res_frac
         
         self.block_len = block_len   # block length
         assert self.NT%self.block_len == 0, "Number of time points is not divisible by "+str(self.block_len)
