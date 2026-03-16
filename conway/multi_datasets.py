@@ -742,7 +742,7 @@ class MultiClouds(SensoryBase):
             e_block_inds, included_blocks = self.parse_trial_times_expt(ff, self.tranges[ff] )
             NBLK = e_block_inds.shape[0]
             NTblk = e_block_inds[0, 1] - e_block_inds[0, 0]  # assumes all blocks same length
-            print(NBLK, NTblk, included_blocks[0], included_blocks[-1])
+            
             t_expt = 0
             for bb in range(NBLK):
                 self.block_inds.append( 
