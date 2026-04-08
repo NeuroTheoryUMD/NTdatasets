@@ -364,9 +364,139 @@ def disparity_predictions(
     dpred = dpredmod(Ddata[:]).detach().numpy()
 
     return dpred, tpred
+# END disparity predictions()
 
 
-def binocular_model_performance( data=None, cell_n=0, Rpred=None, valset=None, verbose=True ):
+def disparity_predictions_drift( 
+    data, resp=None, cell_n=None,
+    fr1or3=None, indxs=None, drift_term=None, Dreg=0.1,
+    num_dlags=8,  spiking=True, rectified=True ):
+    """
+    Calculates a prediction of the disparity (and timing) signals that can be inferred from the response
+    by the disparity input alone. This puts a lower bound on how much disparity is driving the response, although
+    practically speaking it generates the same disparity tuning curves for neurons.
+    
+    Args:
+        data: dataset (NTdatasets.binocular.single)
+        resp: either Robs or predicted response across whole dataset -- leave blank if want neurons Robs
+        cell_n: cell number (in python numbering, i.e. starting with 0)
+        fr1or3: whether to use fr1==1, fr3==3, or both (leave as None) to calculate disparity. Should choose 1 or 3
+        indxs: subset of data to fit to, but predictions over whole dataset
+        num_dlags: how many lags to compute disparity/timing predictions using (default 8 is sufficient)
+        spiking: whether to use Poisson loss function (spiking data) or Gaussian (continuous prediction): default True
+        rectified: whether to rectify the predictions using softplus (since predicting spikes, generally)
+        Dreg: regularization strength for drift term (default 0.1)
+    
+    Returns: 
+        Dpred: full disparity+timing prediction
+        Tpred: prediction using just frame refresh and blanks
+        Note that both will predict over the whole dataset, even if only used 1 part to fit
+    """
+
+    assert cell_n is not None, "Need to specify which neuron modeling for valid comparisons"
+    
+    import torch
+    from NTdatasets.generic import GenericDataset
+    from NDNT.modules.layers import NDNLayer
+
+    # use Robs if response is blank
+    if resp is None:
+        resp = data.robs[:, cell_n]
+    # Make sure response is formatted correctly
+    if not isinstance( resp, torch.Tensor):
+        resp = torch.tensor( resp, dtype=torch.float32 )
+    if len(resp.shape) == 1:
+        resp = resp[:, None]
+
+    if indxs is None:
+        indxs = range(resp.shape[0])
+    if (fr1or3 == 3) or (fr1or3 == 1):
+        mod_indxs = np.intersect1d(indxs, np.where(data.frs == fr1or3)[0])
+    else:
+        mod_indxs = indxs
+
+    # Process disparity into disparty and timing design matrix
+    dmat = disparity_matrix( data.dispt, data.corrt )  # all information about disparity
+    
+    # This keeps track of changes in disparity (often every 3)
+    switches = np.expand_dims(np.concatenate( (np.sum(abs(np.diff(dmat, axis=0)),axis=1), [0]), axis=0), axis=1)/2
+    # Switches are not relevant during FR1 -- would at best be constant offset
+    switches[np.where(data.frs == 1)[0]] = 0.0
+    
+    # Append switches to full disparity-oracle dataset
+    dmat = np.concatenate( (dmat, switches), axis=1 )
+    ND2 = dmat.shape[1]  # this includes uncorrelated (second to last) and blanks (last column
+
+    blanks = dmat[:, -1][:, None]
+    tmat = np.concatenate( (blanks, switches), axis=1 )
+
+    # Make models that use disparity to predict response, and timing alone
+    if drift_term is not None:
+        Xdrift = data[:]['Xdrift']
+    else:
+        Xdrift = None
+
+    Ddata = GenericDataset( {
+        'stim': torch.tensor(utils.create_time_embedding( dmat, num_dlags), dtype=torch.float32),
+        'timing': torch.tensor(utils.create_time_embedding( tmat, num_dlags), dtype=torch.float32),
+        'robs': resp,
+        'dfs': data.dfs[:, cell_n][:, None],
+        'Xdrift': Xdrift})
+        
+    if rectified and (drift_term is None):
+        nltype = 'softplus'
+    else:
+        nltype = 'lin'
+    if spiking:
+        losstype = 'poisson'
+    else:
+        losstype = 'gaussian'
+
+    dpred_layer = NDNLayer.layer_dict(
+        input_dims=[1,ND2,1,num_dlags], num_filters=1, bias=True, NLtype=nltype)
+
+    tpred_layer = NDNLayer.layer_dict(
+        input_dims=[2,1,1,num_dlags], num_filters=1, bias=True, NLtype=nltype)
+
+    if drift_term is None:
+        dpredmod = NDN( layer_list=[dpred_layer], loss_type=losstype )
+        tpredmod = NDN( layer_list=[tpred_layer], loss_type=losstype )
+        tpredmod.networks[0].xstim_n = 'timing'
+    else:
+        from NDNT.networks import FFnetwork
+        dpred_net = FFnetwork.ffnet_dict( xstim_n='stim', layer_list = [dpred_layer])
+        tpred_net = FFnetwork.ffnet_dict( xstim_n='timing', layer_list = [tpred_layer])
+        # Need to add drift term
+        drift_pars = NDNLayer.layer_dict( 
+            input_dims=[1,1,1,len(drift_term)], num_filters=1, bias=False, norm_type=0, NLtype='lin',
+            reg_vals={'d2t': Dreg, 'bcs':{'d2t':0} } )
+        drift_net = FFnetwork.ffnet_dict( xstim_n='Xdrift', layer_list = [drift_pars])
+        if rectified:
+            nltype = 'softplus'
+        else:
+            nltype = 'lin'
+        comb_pars = NDNLayer.layer_dict(num_filters=1, NLtype=nltype, bias=True, weights_initializer='ones')
+        comb_net = FFnetwork.ffnet_dict( xstim_n=None, ffnet_n=[0,1], layer_list = [comb_pars], ffnet_type='add')
+        dpredmod = NDN( ffnet_list=[dpred_net, drift_net, comb_net], loss_type=losstype )
+        tpredmod = NDN( ffnet_list=[tpred_net, drift_net, comb_net], loss_type=losstype )
+        dpredmod.networks[1].layers[0].weight.data = torch.tensor( drift_term, dtype=torch.float32 )
+        tpredmod.networks[1].layers[0].weight.data = torch.tensor( drift_term, dtype=torch.float32 )
+        dpredmod.networks[1].set_parameters(val=False)
+        tpredmod.networks[1].set_parameters(val=False)
+        dpredmod.networks[2].set_parameters(val=False, name='weight')
+        tpredmod.networks[2].set_parameters(val=False, name='weight')
+
+    utils.fit_lbfgs( dpredmod, Ddata[mod_indxs], verbose=False )
+    utils.fit_lbfgs( tpredmod, Ddata[mod_indxs], verbose=False )
+    #tpredmod.fit( Ddata, force_dict_training=True, train_inds=mod_indxs, val_inds=mod_indxs, 
+    #            **lbfgs_pars, verbose=0, version=1)
+    tpred = tpredmod(Ddata[:]).detach().numpy()
+    dpred = dpredmod(Ddata[:]).detach().numpy()
+
+    return dpred, tpred
+
+
+def binocular_model_performance( data=None, cell_n=0, Rpred=None, model=None, valset=None, verbose=True ):
     """
     Current best-practices for generating prediction quality of neuron and binocular tuning. Currently we
     are not worried about using cross-validation indices only (as they are based on much less data and tend to
@@ -376,7 +506,8 @@ def binocular_model_performance( data=None, cell_n=0, Rpred=None, valset=None, v
     Args:
         data: binocular dataset (NTdatasets.binocular.single)
         cell_n: cell number (in python numbering, i.e. starting with 0)
-        Rpred: predicted response of the model
+        Rpred: predicted response of the model, or can pass in model if set to None
+        model: model to use to generate predictions if Rpred is None
         valset: which validation set to use (None, 'a', 'b')
         verbose: whether to print out results
 
@@ -390,6 +521,11 @@ def binocular_model_performance( data=None, cell_n=0, Rpred=None, valset=None, v
     #import torch
     #if not isinstance( Rpred, torch.Tensor):
     #    Rpred = torch.tensor( Rpred, dtype=torch.float32 )
+    if Rpred is None:
+        assert model is not None, "Either Rpred or model must be specified"
+        cells_out_save = deepcopy(data.cells_out)
+        data.set_cells(cell_n)
+        Rpred = model(data[:]).detach()
     if len(Rpred.shape) == 1:
         Rpred = Rpred[:, None]
     

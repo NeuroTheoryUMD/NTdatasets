@@ -301,6 +301,16 @@ class MultiClouds(SensoryBase):
             channel_ratings = np.concatenate( 
                 (channel_ratings, np.array(f['RobsMU_rating'], dtype=int).squeeze()), axis=0)
 
+        if 'arrayPerSU' in f:
+            arrayPerSU = np.array(f['arrayPerSU'], dtype=int).squeeze()
+            if self.includeMUs:
+                arrayPerMU = np.array(f['arrayPerMU'], dtype=int).squeeze()
+                array_map = np.concatenate( (arrayPerSU, arrayPerMU), axis=0)
+            else:
+                array_map = deepcopy(arrayPerSU)
+        else:
+            array_map = None
+
         # Block information
         blk_inds = np.array(f['block_inds'], dtype=np.int64)
         blk_inds[:, 0] += -1  # convert to python so range works
@@ -368,30 +378,6 @@ class MultiClouds(SensoryBase):
             exptname = filename[:a]
         else:
             exptname = filename
-        # self.tranges set initially by correct eye config 
-        #self.tranges[file_n] = deepcopy(tmap)  
-
-            # Remap valid_inds to smaller trange -- does not use val_track: just temp variable
-            #val_track = np.zeros(NT, dtype=np.int64)
-            #val_track[valid_inds] = 1
-            #valid_inds = np.where(val_track[tmap] == 1)[0]
-
-            #NT = len(tmap)
- 
-            # Remap block_inds to reduced map
-            #block_inds, bmap = self.parse_trial_times_expt( file_n, tmap )  # might want to do dynamically
-            #bmap = []
-            #tcount = 0
-            #block_inds = []
-            #for bb in range(NBLK):
-            #    if blk_inds[bb,0] in tmap:
-            #        bmap.append(bb)
-            #        NTblk = blk_inds[bb,1]-blk_inds[bb,0]
-            #        block_inds.append([tcount, tcount+NTblk])
-            #        tcount += NTblk
-            #block_inds = np.array(block_inds, dtype=np.int64)
-
-            # probably have to modify blockIDs -- not done yet
 
         # Spike times and spike-ID
         if 'spike_ts' in f:
@@ -403,7 +389,7 @@ class MultiClouds(SensoryBase):
         else:
             spk_ts = None
             spk_ids = None
-        
+
         return {
             'exptname': exptname,
             'NT': NT,
@@ -418,6 +404,7 @@ class MultiClouds(SensoryBase):
             'NSUs': NSUs,
             'NMUs': NMUs,
             'channel_map': channel_map,
+            'array_map': array_map,
             'channel_ratings': channel_ratings,
             'fix_loc': fix_loc,
             'fix_size': fix_size,
