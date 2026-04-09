@@ -521,7 +521,7 @@ class MultiClouds(SensoryBase):
                 end_block = tt
         assert (start_block >= 0), "trange must respect trial boundaries: start_block"
         assert (end_block >= 0), "trange must respect trial boundaries: end_block"
-        print( "  Trials included: %d to %d"%(start_block, end_block), self.expt_blkstart[expt_n] )
+        print( "  Trials included: %d to %d"%(start_block, end_block) )
         self.tranges[expt_n] = trange
         # self.block_ranges is modified with assemble_robs
         #self.block_ranges[expt_n] = np.arange(start_block + self.expt_blkstart[expt_n], end_block+ self.expt_blkstart[expt_n])
