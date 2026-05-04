@@ -759,7 +759,8 @@ class MultiClouds(SensoryBase):
 
     def set_upsample( self, frac ):
         """
-        This sets upsample flag and generates a higher-time resolution Robs
+        This sets upsample flag and generates a higher-time resolution Robs. Note it will also automatically scale up
+        the num_lags associated with the dataset, but note that this will have to be adjusted in other places too.
         
         Args:
             frac: integer amount of upsampling past frame resolution
@@ -769,6 +770,11 @@ class MultiClouds(SensoryBase):
         """
         assert frac >= 1, "frac must be a positive integer"
 
+        upsample_mult = frac/self.upsample
+        if upsample_mult > 1:
+            print( "  Upsampling by %d: changing num_lags with dataset to %d"%(frac, self.num_lags*upsample_mult) )
+            self.num_lags = int(self.num_lags*upsample_mult)
+
         self.upsample = frac
         if frac == 1:
             self.robs_upsample = None
@@ -777,12 +783,15 @@ class MultiClouds(SensoryBase):
             assert self.spk_ids is not None, "No spike time information in dataset."
         dt = (1.0/60)/frac
         self.robs_upsample = np.zeros([self.NT*frac, self.NC], dtype=np.uint8 )
-        for cc in range(self.NC):
-            a = np.where(self.spk_ids == cc)[0]
-            if len(a) > 0:
-                robs_up = np.histogram( self.spk_ts[a], np.arange(self.NT*frac+1)*dt)[0]
-                #print(robs_up.shape, self.robs_upsample[:, cc].shape)
-                self.robs_upsample[:, cc] = robs_up[:(self.NT*frac+1)].astype(np.uint8)
+        #for cc in range(self.NC):
+            #a = np.where(self.spk_ids == cc)[0]
+        for ee in range(self.Nexpts):
+            for cc in range(len(self.cranges[ee])):
+                a = np.where(self.spk_ids == self.cranges[ee][cc])[0] 
+                if len(a) > 0:
+                    robs_up = np.histogram( self.spk_ts[a], np.arange(self.NT*frac+1)*dt)[0]
+                    #print(robs_up.shape, self.robs_upsample[:, cc].shape)
+                    self.robs_upsample[:, cc] = robs_up[:(self.NT*frac+1)].astype(np.uint8)
     # END MultiClouds.set_upsample()
 
     def list_expts( self ):
