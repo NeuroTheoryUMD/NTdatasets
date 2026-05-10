@@ -1,6 +1,9 @@
 
 #from inspect import BlockFinder
 import os
+import re
+
+from requests import codes
 import numpy as np
 #import scipy.io as sio
 
@@ -302,7 +305,13 @@ class MultiClouds(SensoryBase):
                 (channel_ratings, np.array(f['RobsMU_rating'], dtype=int).squeeze()), axis=0)
 
         if 'arrayPerSU' in f:
+            import re
             arrayPerSU = np.array(f['arrayPerSU'], dtype=int).squeeze()
+            tmp = np.array(f['array_labels']).squeeze()  
+            array_labels_raw = "".join(chr(c) for c in tmp) # convert from ascii to string
+            pairs = re.findall(r"_(\d+)([^_]+)", array_labels_raw)
+            array_labels = {int(i): label for i, label in pairs}
+
             if self.includeMUs:
                 arrayPerMU = np.array(f['arrayPerMU'], dtype=int).squeeze()
                 array_map = np.concatenate( (arrayPerSU, arrayPerMU), axis=0)
@@ -310,6 +319,7 @@ class MultiClouds(SensoryBase):
                 array_map = deepcopy(arrayPerSU)
         else:
             array_map = None
+            array_labels = None
 
         # Block information
         blk_inds = np.array(f['block_inds'], dtype=np.int64)
@@ -390,6 +400,14 @@ class MultiClouds(SensoryBase):
             spk_ts = None
             spk_ids = None
 
+        # Reward times
+        if 'reward_on_ts' in f:
+            reward_on_ts = np.array(f['reward_on_ts'], dtype=np.float32).squeeze()
+            reward_off_ts = np.array(f['reward_off_ts'], dtype=np.float32).squeeze()
+        else:
+            reward_on_ts = None
+            reward_off_ts = None
+
         return {
             'exptname': exptname,
             'NT': NT,
@@ -405,6 +423,7 @@ class MultiClouds(SensoryBase):
             'NMUs': NMUs,
             'channel_map': channel_map,
             'array_map': array_map,
+            'array_labels': array_labels,
             'channel_ratings': channel_ratings,
             'fix_loc': fix_loc,
             'fix_size': fix_size,
@@ -415,6 +434,8 @@ class MultiClouds(SensoryBase):
             'plexon_trial_times': plexon_trial_times,
             'spike_ts': spk_ts,
             'spikeIDs': spk_ids,
+            'reward_on_ts': reward_on_ts,
+            'reward_off_ts': reward_off_ts,
             'cloud_info': cloud_info}
     # END MultiClouds.read_file_info()  
 
@@ -705,7 +726,6 @@ class MultiClouds(SensoryBase):
                     (tslice, np.array(self.fhandles[ff]['RobsMU'], dtype=np.int64)[self.tranges[ff], :]),
                     axis=1)
             R_tslice[:, ccount+np.arange(self.exptNC[ff])] = deepcopy(tslice[:, self.cranges[ff]])
-            
             tslice = np.array(self.fhandles[ff]['datafilts'], dtype=np.uint8)[self.tranges[ff], :]
             if self.include_MUs:
                 tslice = np.concatenate( 
@@ -1045,9 +1065,11 @@ class MultiClouds(SensoryBase):
             #locsET = self.file_info[expt_n]['stim_locsET']
             #locsLP = self.file_info[expt_n]['stim_locsLP']
             sz = stimLP_base.shape
+
             # At this point, stimLP_base and (maybe) stimET_base are over tranges and all colors
             # next part will make appropriately sized/sampled versions of each into stimET and stimLP
             if self.binocular:
+
                 LRpresent = self.file_info[expt_n]['LRpresent'][self.tranges[expt_n]]
             # LEYAS version
             #    num_clr *= 2  # make binocular be like just 2x more colors (channel dim)
@@ -1115,6 +1137,7 @@ class MultiClouds(SensoryBase):
                     if self.luminance_only:
                         if stimET_base is not None: 
                             stimET = stimET[:, 0, ...][:, None, ...]  # maintain 2nd dim (length 1)
+                    print(np.sum(abs(stimET)), np.sum(abs(stimLP)))
          
             NT = self.exptNT[expt_n]
             newstim = np.zeros( [NT, num_dim0, L, L], dtype=np.int8 )
@@ -1137,7 +1160,6 @@ class MultiClouds(SensoryBase):
 
             #stim = torch.tensor( newstim, dtype=torch.float32, device=self.device )
         # Note stim stored in numpy is being represented as full 3-d + 1 tensor (time, channels, NX, NY)
-
         self.stim_pos = deepcopy(stim_pos)
         # Insert fixation point
         if (fixdot is not None) and self.is_fixpoint_present( stim_pos, expt_n ):
@@ -1199,7 +1221,7 @@ class MultiClouds(SensoryBase):
 
             else:
                 newstim = self.shift_stim(newstim, eyepos) 
-
+        
         # Reduce size back to original If expanded to handle shifts
         if need2crop:
             #assert self.stim_crop is None, "Cannot crop stim at same time as shifting"
