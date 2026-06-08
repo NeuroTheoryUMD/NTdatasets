@@ -64,6 +64,7 @@ class MultiDatasetT(SensoryBase):
         self.upsample = 1
         self.robs_upsample = None
         self.stim_upsample = None
+        self.dfs_upsample = None
 
         # build index map
         self.file_index = [] # which file the block corresponds to
@@ -318,10 +319,16 @@ class MultiDatasetT(SensoryBase):
             stim = self.stim[index, :]
             robs = self.robs[index, :]
             dfs = self.dfs[index, :]
+            
             if self.upsample > 1:
-                stim = self.stim_upsample[index, :]
-                robs = self.robs_upsample[index, :]
-                dfs = np.repeat(self.dfs,self.upsample,axis=0)[index, :]
+                total_index = []
+                for i in range(self.upsample):
+                    new_index = index*self.upsample + i
+                    total_index.extend(new_index)
+
+                stim = self.stim_upsample[total_index, :]
+                robs = self.robs_upsample[total_index, :]
+                dfs = self.dfs_upsample[total_index,:]
 
         else:
             stim = []
@@ -614,6 +621,17 @@ class MultiDatasetT(SensoryBase):
             # print(np.repeat(self.stim[:3,::self.stim_dims[3]],frac,axis=0))
             self.stim_upsample = self.time_embedding(np.repeat(self.stim[:,::self.stim_dims[3]],frac,axis=0))
         self.stim_dims[3] = self.num_lags
+        self.dfs_upsample = np.repeat(self.dfs,frac,axis=0)
+
+        if self.device is None:
+            device = torch.device("cpu")
+        else:
+            device = self.device
+
+        if type(self.robs_upsample) != torch.Tensor:
+            self.robs_upsample = torch.tensor(self.robs_upsample, dtype=torch.float32, device=device)
+
+
 
 
 def get_stim_url(id):
