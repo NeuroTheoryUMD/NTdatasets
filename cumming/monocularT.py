@@ -97,13 +97,21 @@ class MultiDatasetT(SensoryBase):
             NTfile = fhandle['binned_SU'].shape[1]
             NCfile = fhandle['binned_SU'].shape[0]
             NMUfile = fhandle['binned_MUA'].shape[0]
+            
+            n = 0
+            for i in range(NCfile):
+                if np.sum(fhandle['data_filters'][i]) != 0:
+                    #keep only cells where dfs is not entirely 0
+                    n += 1
+            NCfile = n
+
             self.num_SUs.append(NCfile)
             self.num_MUs.append(NMUfile)
             self.SUs = self.SUs + list(range(self.NC, self.NC+NCfile))
 
             self.dims_file.append(fhandle['stimulus'].shape[0])
             if self.include_MUs:
-                NCfile += NMUfile
+                NCfile += NMUfile   
             self.unit_ids.append(self.NC + np.asarray(range(NCfile)))
             
             self.num_units.append(NCfile)
@@ -160,35 +168,42 @@ class MultiDatasetT(SensoryBase):
                 print("Loading", self.filenames[f])
                 NT = fhandle['binned_SU'].shape[1]
                 NC = fhandle['binned_SU'].shape[0]
+
+                delete_inds = []
+                for i in range(NC):
+                    if np.sum(fhandle['data_filters'][i]) == 0:
+                        delete_inds.append(i)
+                        NC -= 1
+
                 trange = range(tcount, tcount+NT)
                 crange = range(ccount, ccount+NC)
                 
                 # Stimulus
                 if not self.time_embed:
-                    self.stim[trange, :] = np.transpose(np.array(self.fhandles[f]['stimulus'], dtype='float32'))
+                    self.stim[trange, :] = np.transpose(np.array(fhandle['stimulus'], dtype='float32'))
                 else:
                     # Time embed stimulus -- simple way
                     #idx = np.arange(NT)
-                    #tmp = np.transpose(np.array(self.fhandles[f]['stimulus'], dtype='float32'))
+                    #tmp = np.transpose(np.array(fhandle['stimulus'], dtype='float32'))
                     #self.stim[trange, :] = np.reshape( 
                     #    np.transpose(
                     #        tmp[np.arange(NT)[:,None]-np.arange(self.num_lags), :], 
                     #        [0,2,1]),
                     #    [NT, -1])
                     self.stim[trange, :] = self.time_embedding(
-                        stim = np.transpose(np.array(self.fhandles[f]['stimulus'], dtype='float32')))
+                        stim = np.transpose(np.array(fhandle['stimulus'], dtype='float32')))
 
                 # Robs and DFs
                 robs_tmp = np.zeros([NT, self.NC], dtype=np.float32)
                 dfs_tmp = np.zeros([NT, self.NC], dtype=np.float32)
-                robs_tmp[:, crange] = np.transpose(np.array(self.fhandles[f]['binned_SU'], dtype='float32'))
-                dfs_tmp[:, crange] = np.transpose(np.array(self.fhandles[f]['data_filters'], dtype='float32'))
+                robs_tmp[:, crange] = np.transpose(np.delete(np.array(fhandle['binned_SU'], dtype='float32'),delete_inds,axis=0))
+                dfs_tmp[:, crange] = np.transpose(np.delete(np.array(fhandle['data_filters'], dtype='float32'),delete_inds,axis=0))
                 if self.include_MUs:
                     NMU = fhandle['binned_MUA'].shape[0]
                     crange = range(ccount+NC, ccount+NC+NMU)
                     NC += NMU
-                    robs_tmp[:, crange] = np.transpose(np.array(self.fhandles[f]['binned_MUA'], dtype='float32'))
-                    dfs_tmp[:, crange] = np.transpose(np.array(self.fhandles[f]['dfsMU'], dtype='float32'))
+                    robs_tmp[:, crange] = np.transpose(np.array(fhandle['binned_MUA'], dtype='float32'))
+                    dfs_tmp[:, crange] = np.transpose(np.array(fhandle['dfsMU'], dtype='float32'))
 
                 self.robs[trange, :] = deepcopy(robs_tmp)
                 self.dfs[trange, :] = deepcopy(dfs_tmp)
@@ -208,40 +223,58 @@ class MultiDatasetT(SensoryBase):
                 ##RENAME VARIABLES TO MATCH DAN'S IN MULTI DATASET
                 num_probes = len(fhandle['spike_data']['SU_spk_times'][0])
                 spike_times_tmp = np.zeros((0,2))
-                boundaries = np.zeros(0)
-                skip_count = 0
+                cell_num = ccount
+                n_filter = 0
 
                 for i in range(num_probes):
-                    cell_num = i + ccount - skip_count
                     
                     SU_spike_times_ref = fhandle['spike_data']['SU_spk_times'][0][i]
                     unlabeled_spike_times = fhandle[SU_spike_times_ref][0]
                     
-                    if np.isscalar(unlabeled_spike_times): # probes with no data have a 0 instead of the spike times array
-                        skip_count += 1
+                    if np.isscalar(unlabeled_spike_times):
+                        # probes with no data have a 0 instead of the spike times array
                         continue
                     
+                    n_filter += 1
+                    if np.sum(fhandle['data_filters'][n_filter-1]) == 0:
+                        #somtimes cell is excluded entirely in dfs, but still has spike times
+                        continue
+
                     spike_num = len(unlabeled_spike_times)
                     cell_nums = cell_num*np.ones(spike_num) #for labeling spikes
+                    cell_num += 1
                     
                     labeled_spike_times = np.stack((cell_nums,unlabeled_spike_times), axis=1)
                     spike_times_tmp = np.concatenate((spike_times_tmp,labeled_spike_times),axis=0)
+                
+                # for i in np.unique(spike_times_tmp[:,0]): #debugging
+                #     inds = np.where(spike_times_tmp[:,0]==i)[0]
+                #     sum = len(inds)
 
+                #     print("number of spikes for cell %i: %i" % (i, sum))
                 # sort_filter = np.argsort(spike_times_tmp[:,1])
                 # spike_times_tmp = spike_times_tmp[sort_filter, :] #sorted by spike time ascending, sorting is unecessary?
+                # print(trialcount, len(trial_starts))
 
                 for i in range(len(trial_starts)): #loop over number of trials
                     t0 = trial_starts[i]
                     t_end = trial_ends[i]
-                    spk_tr_inds = np.where((spike_times_tmp[:,1]>=t0) & (spike_times_tmp[:,1]<=t_end))[0]
-                    spike_times_tmp[spk_tr_inds,1] -= trial_starts[i]
-                    spike_times_tmp[spk_tr_inds,1] += self.block_inds[i+trialcount][0]*self.dt
-                    self.spike_times = np.concatenate([self.spike_times,deepcopy(spike_times_tmp[spk_tr_inds])], axis=0)
+                    spk_tr_inds = np.where((spike_times_tmp[:,1]>=t0) & (spike_times_tmp[:,1]<=t_end))[0]#find spikes in a trial
+                    spike_times_tmp[spk_tr_inds,1] -= trial_starts[i]# subtract the trial start time from those spike times
+                    
+                    spike_tot_times = spike_times_tmp[spk_tr_inds]
+                    spike_tot_times[:,1] += self.block_inds[i+trialcount][0]*self.dt #add trial start times relative to time bins 
+                    
+                    self.spike_times = np.concatenate([self.spike_times,deepcopy(spike_tot_times)], axis=0)
+                
+                # for i in np.unique(self.spike_times[:,0]): #debugging
+                #     inds = np.where(self.spike_times[:,0]==i)[0]
+                #     sum = len(inds)
+                #     print("number of spikes for cell %i: %i" % (i, sum))
 
                 trialcount += len(trial_starts)
                 tcount += NT
                 ccount += NC
-        
 
             # Convert data to tensor
             self.to_tensor()
