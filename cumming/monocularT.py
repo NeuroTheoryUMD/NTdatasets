@@ -203,7 +203,7 @@ class MultiDatasetT(SensoryBase):
                     crange = range(ccount+NC, ccount+NC+NMU)
                     NC += NMU
                     robs_tmp[:, crange] = np.transpose(np.array(fhandle['binned_MUA'], dtype='float32'))
-                    dfs_tmp[:, crange] = np.transpose(np.array(fhandle['dfsMU'], dtype='float32'))
+                    dfs_tmp[:, crange] = np.transpose(np.array(fhandle['data_filters_MUA'], dtype='float32'))
 
                 self.robs[trange, :] = deepcopy(robs_tmp)
                 self.dfs[trange, :] = deepcopy(dfs_tmp)
@@ -256,7 +256,8 @@ class MultiDatasetT(SensoryBase):
                 # spike_times_tmp = spike_times_tmp[sort_filter, :] #sorted by spike time ascending, sorting is unecessary?
                 # print(trialcount, len(trial_starts))
 
-                for i in range(len(trial_starts)): #loop over number of trials
+                Ntrials = len(fhandle['block_inds'][0,:])
+                for i in range(Ntrials): #loop over number of trials
                     t0 = trial_starts[i]
                     t_end = trial_ends[i]
                     spk_tr_inds = np.where((spike_times_tmp[:,1]>=t0) & (spike_times_tmp[:,1]<=t_end))[0]#find spikes in a trial
@@ -272,7 +273,7 @@ class MultiDatasetT(SensoryBase):
                 #     sum = len(inds)
                 #     print("number of spikes for cell %i: %i" % (i, sum))
 
-                trialcount += len(trial_starts)
+                trialcount += Ntrials
                 tcount += NT
                 ccount += NC
 
@@ -335,13 +336,9 @@ class MultiDatasetT(SensoryBase):
             dictionary of tensors for this batch
         """
         # Convert trials to indices if trial-sample
+        index = self.index_to_array(index,self.NT)
+        
         if self.block_sample:
-            if isinstance(index, slice):
-                index = np.arange(self.num_blocks)[index]  # convert to array
-
-            if utils.is_int(index):
-                index = [index]
-
 
             ts = self.block_inds[index[0]]
             for ii in index[1:]:
@@ -354,14 +351,11 @@ class MultiDatasetT(SensoryBase):
             dfs = self.dfs[index, :]
             
             if self.upsample > 1:
-                total_index = []
-                for i in range(self.upsample):
-                    new_index = index*self.upsample + i
-                    total_index.extend(new_index)
+                new_index = (np.repeat(index[:, None]*self.upsample, self.upsample, axis=1)+ np.arange(self.upsample)[None,:]).reshape([-1])
 
-                stim = self.stim_upsample[total_index, :]
-                robs = self.robs_upsample[total_index, :]
-                dfs = self.dfs_upsample[total_index,:]
+                stim = self.stim_upsample[new_index, :]
+                robs = self.robs_upsample[new_index, :]
+                dfs = self.dfs_upsample[new_index,:]
 
         else:
             stim = []
@@ -629,17 +623,23 @@ class MultiDatasetT(SensoryBase):
         upsample_mult = frac/self.upsample
         if upsample_mult > 1:
             print( "  Upsampling by %d: changing num_lags with dataset to %d"%(frac, self.num_lags*upsample_mult) )
-            self.num_lags = int(self.num_lags*upsample_mult)
+            
+        orig_lags = int(self.num_lags/self.upsample)
+        self.num_lags = int(self.num_lags*upsample_mult)
+        self.stim_dims[3] = self.num_lags
 
         self.upsample = frac
         if frac == 1:
             self.robs_upsample = None
+            self.dfs_upsample = None
+            self.stim_upsample = None
             return
         else:
             assert self.spike_times[:,0] is not None, "No spike time information in dataset."
         
         dt = self.dt/frac
         self.robs_upsample = np.zeros([self.NT*frac, self.NC], dtype=np.uint8 )
+
         for cc in range(self.NC):
             a = np.where(self.spike_times[:,0] == cc)[0] 
             if len(a) > 0:
@@ -648,12 +648,10 @@ class MultiDatasetT(SensoryBase):
                 self.robs_upsample[:, cc] = robs_up.astype(np.uint8)
 
         if not self.time_embed:
-            self.stim_upsample = np.repeat(self.stim,frac,axis=0) #this might not be right
+            self.stim_upsample = np.repeat(self.stim,frac,axis=0)
         else:
-
-            # print(np.repeat(self.stim[:3,::self.stim_dims[3]],frac,axis=0))
-            self.stim_upsample = self.time_embedding(np.repeat(self.stim[:,::self.stim_dims[3]],frac,axis=0))
-        self.stim_dims[3] = self.num_lags
+            self.stim_upsample = self.time_embedding(np.repeat(self.stim[:,::orig_lags],frac,axis=0))
+        
         self.dfs_upsample = np.repeat(self.dfs,frac,axis=0)
 
         if self.device is None:
