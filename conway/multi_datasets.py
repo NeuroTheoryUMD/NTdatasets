@@ -354,11 +354,11 @@ class MultiClouds(SensoryBase):
         else:
             stim_location_deltas = None
         if 'cloud_binary' in f:
-            cloud_binary = np.array(f['cloud_binary'], dtype=np.int64)
+            cloud_binary = np.array(f['cloud_binary'], dtype=np.int64).squeeze()
             # 0 = normal clouds, 1 = binary clouds, 2 = contrast-matched clouds
             #cloud_area = np.array(f['cloud_area'], dtype=np.int64)
-            cloud_scale = np.array(f['cloud_scale'], dtype=np.int64)
-            cloud_info = np.concatenate( (cloud_binary, cloud_scale), axis=1 )
+            cloud_scale = np.array(f['cloud_scale'], dtype=np.int64).squeeze()
+            cloud_info = np.concatenate( (cloud_binary[:,None], cloud_scale[:,None]), axis=1 )
         else:
             cloud_info = None
 
