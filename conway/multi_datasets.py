@@ -1048,7 +1048,7 @@ class MultiClouds(SensoryBase):
                 num_clr = 3
     
             # Read in stimuli
-            if len(self.fhandles[expt_n]['stimET'].shape) == 1:
+            if (len((self.fhandles[expt_n]['stimET']).shape) == 1) or (np.min(self.fhandles[expt_n]['stimET'].shape) < 2):
                 stimET_base = None
             else:
                 stimET_base = np.array(self.fhandles[expt_n]['stimET'][self.tranges[expt_n], ...], dtype=np.int8)
@@ -1288,46 +1288,84 @@ class MultiClouds(SensoryBase):
         print( "Stimulus assembly complete")
     # END MultiClouds.assemble_stimulus()
 
-    #def time_embedding( self, stim=None, nlags=None ):
-    #    """
-    #    Note this overloads SensoryBase because reshapes in full dimensions to handle folded_lags
-        
-    #    Args:
-    #        stim (np.array): stimulus to time-embed
-    #        nlags (int): number of lags
+    def calc_stas( self, lags=None, clist=None, to_reshape=True, verbose=False, to_plot=False, return_dict=False ):
+        """
+        Calculate spike-triggered averages for each cell in clist (or all cells if clist=None) at lags (or self.num_lags if lags=None)
 
-    #    Returns:
-    #        np.array: time-embedded stimulus
-    #    """
-    #    assert self.stim_dims is not None, "Need to assemble stim before time-embedding."
+        Args:
+            lags (list): list of lags to calculate stas at
+            clist (list): list of cells to calculate stas for
 
-    #    if nlags is None:
-    #        nlags = self.num_lags
-        #if self.stim_dims[3] == 1:
-        #    self.stim_dims[3] = nlags
-        #if stim is None:
-        #    tmp_stim = deepcopy(self.stim)
-    
-    #    NT = stim.shape[0]
-    #    print("  Time embedding...")
-        #if len(tmp_stim.shape) == 2:
-        #    print( "Time embed: reshaping stimulus ->", self.stim_dims)
-        #    tmp_stim = tmp_stim.reshape([NT] + self.stim_dims)
+        Returns: 
+            np.array: array of stas for each cell and lag
+        """
+        if lags is None:
+            lags = np.arange(3,6)
+        if lags == 'all':
+            lags = np.arange(self.num_lags)
+        if clist is None:
+            clist = np.arange(self.NC)
 
-        #assert self.NT == NT, "TIME EMBEDDING: stim length mismatch"
+        assert self.stim_dims is not None, "Need to assemble stim before calculating stas."
 
-        #tmp_stim = tmp_stim[np.arange(NT)[:,None]-np.arange(nlags), :, :, :]
-    #    tmp_stim = tmp_stim[np.arange(NT)[:,None]-np.arange(nlags), :]
-        #if self.folded_lags:
-        #    #tmp_stim = np.transpose( tmp_stim, axes=[0,2,1,3,4] ) 
-        #    tmp_stim = torch.permute( tmp_stim, (0,2,1,3,4) ) 
-        #    print("Folded lags: stim-dim = ", self.stim.shape)
-        #else:
-        #    #tmp_stim = np.transpose( tmp_stim, axes=[0,2,3,4,1] )
-        #    tmp_stim = torch.permute( tmp_stim, (0,2,3,4,1) )
-    #    tmp_stim = torch.permute( tmp_stim, (0,2,1) )
-    #    return tmp_stim
-    # END .time_embedding()
+        Reff = (self[:]['robs'] * self[:]['dfs'])[:, clist]
+        nspks = torch.sum(Reff, axis=0)
+        stas = []
+        for lag in lags:
+            if verbose:
+                print( "  Computing lag %d"%lag )
+            stas.append( (self[:]['stim'][:-lag, ...].T @ Reff[lag:,:]/nspks[None, :]).cpu().numpy())
+        stas = np.stack(stas, axis=0)
+        RFcenters = np.zeros( (len(clist), 2), dtype=int )
+        best_lags = np.zeros( len(clist), dtype=int )
+        if to_plot:
+            import matplotlib.pyplot as plt
+            if self.stim_dims[0] == 1:
+                nrows = int(np.ceil(len(clist)/6))
+                #stas = stas.reshape([len(lags), self.stim_dims[0],self.stim_dims[1],self.stim_dims[2],len(clist)])
+                stas = stas.reshape([len(lags), self.stim_dims[1],self.stim_dims[2],len(clist)])
+                utils.ss(nrows,6, rh=2.7)
+                for cc in range(len(clist)):
+                    # find best lag
+                    best_lag, x0, y0 = utils.max_multiD(abs(stas[...,cc]))
+                    RFcenters[cc, :] = [x0, y0]
+                    best_lags[cc] = lags[best_lag]
+                    plt.subplot(nrows, 6, cc+1)
+                    utils.imagesc(stas[best_lag, :, :, cc])
+                    plt.plot(x0, y0, 'r.')
+                    plt.title('Cell %d (lag %d)'%(clist[cc], lags[best_lag]))
+            else:
+                nchan = self.stim_dims[0]
+                assert nchan in [2,3,6], "Currently only set up to plot stas with 2, 3, or 6 channels (i.e. binocular or color), but should do more sometime"
+                nrows = int(np.ceil(len(clist)/(6//nchan)))
+                stas = stas.reshape([len(lags), self.stim_dims[0], self.stim_dims[1],self.stim_dims[2],len(clist)])
+                utils.ss(nrows,6, rh=2.7)
+                for cc in range(len(clist)):
+                    # find best lag
+                    best_lag, x0, y0 = utils.max_multiD(np.max(abs(stas[...,cc], axis=1)))
+                    RFcenters[cc, :] = [x0, y0]
+                    best_lags[cc] = lags[best_lag]
+                    m = np.max(abs(stas[...,cc]))
+                    for ch in range(nchan):
+                        plt.subplot(nrows, 6, nchan*cc+ch+1)
+                        utils.imagesc(stas[best_lag, ch, :, :, cc], max=m)
+                        plt.plot(x0, y0, 'r.')
+                        if ch == 0:
+                            plt.ylabel('Cell %d'%clist[cc])
+                        plt.title('Cell %d (CH%d lag %d)'%(clist[cc], ch,lags[best_lag]))
+            plt.show()
+        info_dict = {'RFcenters': RFcenters, 'nspks': nspks}
+
+        if to_reshape:
+            stas = stas.reshape([len(lags), self.stim_dims[0],self.stim_dims[1],self.stim_dims[2],len(clist)]).squeeze()
+        else:
+            stas = stas.reshape([len(lags), -1, len(clist)])
+        if return_dict:
+            return stas, info_dict
+        else:
+            return stas
+    # END MultiClouds.calc_stas()
+
 
     @staticmethod
     def rectangle_overlap_ranges( A, B ):
