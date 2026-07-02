@@ -73,7 +73,7 @@ class MultiDatasetT(SensoryBase):
 
         self.unit_ids = []
         #self.includeMUs = include_MUs
-        #self.num_units, self.num_sus, self.num_mus = [], [], []
+        self.num_units, self.num_sus, self.num_mus = [], [], []
         self.dims_file = []
 
         if (self.device is not None) and (not self.preload):
@@ -104,7 +104,7 @@ class MultiDatasetT(SensoryBase):
                     #keep only cells where dfs is not entirely 0
                     n += 1
             NCfile = n
-
+            print(fhandle, NCfile)
             self.num_SUs.append(NCfile)
             self.num_MUs.append(NMUfile)
             self.SUs = self.SUs + list(range(self.NC, self.NC+NCfile))
@@ -256,8 +256,13 @@ class MultiDatasetT(SensoryBase):
                 # spike_times_tmp = spike_times_tmp[sort_filter, :] #sorted by spike time ascending, sorting is unecessary?
                 # print(trialcount, len(trial_starts))
 
+                print(' Spike Times Processing')
                 Ntrials = len(fhandle['block_inds'][0,:])
                 for i in range(Ntrials): #loop over number of trials
+                    while np.isnan(trial_starts[i]) or np.isnan(trial_ends[i]): #at least one experiment had an extra nan end time that messed up training
+                        trial_starts = np.delete(trial_starts, i)
+                        trial_ends = np.delete(trial_ends, i)
+
                     t0 = trial_starts[i]
                     t_end = trial_ends[i]
                     spk_tr_inds = np.where((spike_times_tmp[:,1]>=t0) & (spike_times_tmp[:,1]<=t_end))[0]#find spikes in a trial
@@ -336,26 +341,28 @@ class MultiDatasetT(SensoryBase):
             dictionary of tensors for this batch
         """
         # Convert trials to indices if trial-sample
-        index = self.index_to_array(index,self.NT)
-        
+
         if self.block_sample:
 
+            index = self.index_to_array(index,self.num_blocks)
             ts = self.block_inds[index[0]]
             for ii in index[1:]:
                 ts = np.concatenate( (ts, self.block_inds[ii]), axis=0 )
             index = ts
-
+        else:
+            index = self.index_to_array(index,self.NT)
+        
         if self.preload:
-            stim = self.stim[index, :]
-            robs = self.robs[index, :]
-            dfs = self.dfs[index, :]
-            
             if self.upsample > 1:
                 new_index = (np.repeat(index[:, None]*self.upsample, self.upsample, axis=1)+ np.arange(self.upsample)[None,:]).reshape([-1])
 
                 stim = self.stim_upsample[new_index, :]
                 robs = self.robs_upsample[new_index, :]
                 dfs = self.dfs_upsample[new_index,:]
+            else:
+                stim = self.stim[index, :]
+                robs = self.robs[index, :]
+                dfs = self.dfs[index, :]
 
         else:
             stim = []
@@ -626,7 +633,6 @@ class MultiDatasetT(SensoryBase):
             
         orig_lags = int(self.num_lags/self.upsample)
         self.num_lags = int(self.num_lags*upsample_mult)
-        self.stim_dims[3] = self.num_lags
 
         self.upsample = frac
         if frac == 1:
@@ -651,6 +657,7 @@ class MultiDatasetT(SensoryBase):
             self.stim_upsample = np.repeat(self.stim,frac,axis=0)
         else:
             self.stim_upsample = self.time_embedding(np.repeat(self.stim[:,::orig_lags],frac,axis=0))
+            self.stim_dims[3] = self.num_lags
         
         self.dfs_upsample = np.repeat(self.dfs,frac,axis=0)
 
