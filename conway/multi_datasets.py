@@ -806,12 +806,14 @@ class MultiClouds(SensoryBase):
         #for cc in range(self.NC):
             #a = np.where(self.spk_ids == cc)[0]
         for ee in range(self.Nexpts):
-            for cc in range(len(self.cranges[ee])):
+            cindx = np.sum(self.exptNC[:ee]) # where to start cell index for this experiment
+            tindx = np.sum(self.exptNT[:ee]) # where to start time index for this experiment
+            NT = self.exptNT[ee]
+            for cc in range(self.exptNC[ee]):
                 a = np.where(self.spk_ids == self.cranges[ee][cc])[0] 
                 if len(a) > 0:
-                    robs_up = np.histogram( self.spk_ts[a], np.arange(self.NT*frac+1)*dt)[0]
-                    #print(robs_up.shape, self.robs_upsample[:, cc].shape)
-                    self.robs_upsample[:, cc] = robs_up[:(self.NT*frac+1)].astype(np.uint8)
+                    robs_up = np.histogram( self.spk_ts[a], np.arange(NT*frac+1)*dt)[0]
+                    self.robs_upsample[tindx*frac:(tindx+NT)*frac, cindx+cc] = robs_up[:(NT*frac+1)].astype(np.uint8)
     # END MultiClouds.set_upsample()
 
     def list_expts( self ):
@@ -1662,6 +1664,60 @@ class MultiClouds(SensoryBase):
             print("Could not identify 'to_output' argument. Can be: 'model', 'weights'" )
             return LLs
     # END MultiClouds.compute_LLsNULL
+
+    def compute_drift_terms( self, drift_terms=None, bias=True, fit_bias=False, fit_drift=True, Dreg=0.1):
+        """ 
+        Computes drift terms from scratch for mulit experiment dataset. Uses mask to restrict fitting valid experiemtns only.
+        
+         Args:
+            drift_terms: the drift terms for all the models: should match the size of Xdrift.
+            bias: bool value if you want to allow bias
+            fit_bias: bool value if you want to fit the bias
+            fit_drift: bool value if you want to fit the drift
+            Dreg: drift_regularization to use if fitting models. Will be entered for model, but not used
+
+        Returns:
+            ws: drift terms for all cells and all experiments
+
+        """
+        from NDNT.modules.layers import MaskLayer
+        from NDNT.NDN import NDN
+        from NDNT.utils import fit_lbfgs
+
+        NC = self.NC
+        NT, NA = self.Xdrift.shape
+
+        # drift network
+        drift_pars = MaskLayer.layer_dict( 
+        input_dims=[1,1,1,NA], num_filters=NC, bias=bias, norm_type=0, NLtype='softplus',
+        reg_vals={'d2t': Dreg, 'bcs':{'d2t':0}} )
+
+        drift_pop = NDN( layer_list = [drift_pars], loss_type='poisson' )
+        drift_pop.networks[0].xstim_n = 'Xdrift'
+        if not fit_drift:
+            drift_pop.set_parameters( val=False, name='weight')
+
+        # define mask
+        mask = torch.zeros(drift_pop.networks[0].layers[0].weight.data.shape)
+        for i in range(len(self.exptNA)):
+            Xstart, Xend = sum(self.exptNA[:i]), sum(self.exptNA[:(i+1)])
+            Ystart, Yend = sum(self.exptNC[:i]), sum(self.exptNC[:(i+1)])
+            mask[Xstart:Xend, Ystart:Yend] = 1
+
+        drift_pop.networks[0].layers[0].set_mask(mask)
+
+        if drift_terms is not None:
+            drift_pop.networks[0].layers[0].weight.data = torch.tensor( drift_terms, dtype=torch.float32)
+        
+        fit_lbfgs( drift_pop, self[:], verbose=False, tolerance_change=1e-10)
+        
+        if bias:
+            bs = drift_pop.networks[0].layers[0].bias.detach().cpu().numpy()
+            ws = drift_pop.get_weights() + bs[None, :]
+        else:
+            ws = drift_pop.get_weights()
+        return ws
+    # END MultiClouds.compute_drift_terms()
 
     def shift_stim_oldstyle(
         self, stim=None, pos_shifts=None, metrics=None, metric_threshold=1, ts_thresh=8, fix_n=None,
