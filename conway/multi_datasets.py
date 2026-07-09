@@ -709,12 +709,12 @@ class MultiClouds(SensoryBase):
             NTexpt = len(self.tranges[ff])
             valid_data = self.file_info[ff]['valid_data']
             if 'spike_ts' in self.file_info[ff]:
-                spk_ts_expt = deepcopy(self.file_info[ff]['spike_ts']) #- self.tranges[ff][0]*dt
+                spk_ts_expt_full = deepcopy(self.file_info[ff]['spike_ts']) #- self.tranges[ff][0]*dt
                 # have to clip off negative spike times and corresponding spike-ids
-                spk_id_expt = deepcopy(self.file_info[ff]['spikeIDs'])
+                spk_id_expt_full = deepcopy(self.file_info[ff]['spikeIDs'])
             else:
-                spk_ts_expt = []
-            spk_ts_mod, spk_id_mod = [], []
+                spk_ts_expt_full = []
+                spk_id_expt_full = []
 
             # Classify cell-lists in terms of SUs and MUs            
             R_tslice = np.zeros( [NTexpt, self.NC], dtype=np.int64 )
@@ -750,23 +750,28 @@ class MultiClouds(SensoryBase):
             NBLK = e_block_inds.shape[0]
             NTblk = e_block_inds[0, 1] - e_block_inds[0, 0]  # assumes all blocks same length
             
+            spk_ts_expt = []
+            spk_id_expt = []
             t_expt = 0
             for bb in range(NBLK):
                 self.block_inds.append( 
                     tcount + np.arange(e_block_inds[bb, 0], e_block_inds[bb, 1]) )
                 # redo spike times
-                if spk_ts_expt is not None:
+                if spk_ts_expt_full is not None:
                     # time in real experiment time of blocks
                     t0 = included_blocks[bb]*NTblk*dt
+                    
                     #a = np.where( (spk_ts_expt >= e_block_inds[bb,0]*dt) & (spk_ts_expt < e_block_inds[bb,1]*dt) )[0]
-                    a = np.where( (spk_ts_expt >= t0) & (spk_ts_expt < (t0+NTblk*dt)) )[0]
+                    a = np.where( (spk_ts_expt_full >= t0) & (spk_ts_expt_full < (t0+NTblk*dt)) )[0]
                     if len(a) > 0:
                         # convert to time within trial
-                        ts = deepcopy(spk_ts_expt[a]) - t0 # time within trial #e_block_inds[bb,0]*dt
-                        self.spk_ts = np.concatenate( (self.spk_ts, ts+t_expt+tcount*dt), axis=0 )
-                        self.spk_ids = np.concatenate( (self.spk_ids, deepcopy(spk_id_expt[a])), axis = 0)
+                        ts = deepcopy(spk_ts_expt_full[a]) - t0 # time within trial #e_block_inds[bb,0]*dt
+                        spk_ts_expt = np.concatenate( (spk_ts_expt, ts+t_expt), axis=0 )
+                        spk_id_expt = np.concatenate( (spk_id_expt, deepcopy(spk_id_expt_full[a])), axis = 0)
                         t_expt += (e_block_inds[bb,1]-e_block_inds[bb,0])*dt
 
+            self.spk_ts.append(spk_ts_expt)
+            self.spk_ids.append(spk_id_expt)
             self.exptNBLK[ff] = NBLK
             self.expt_blkstart[ff] = blkcount
             self.block_ranges[ff] = included_blocks
@@ -810,9 +815,9 @@ class MultiClouds(SensoryBase):
             tindx = np.sum(self.exptNT[:ee]) # where to start time index for this experiment
             NT = self.exptNT[ee]
             for cc in range(self.exptNC[ee]):
-                a = np.where(self.spk_ids == self.cranges[ee][cc])[0] 
+                a = np.where(self.spk_ids[ee] == self.cranges[ee][cc])[0] 
                 if len(a) > 0:
-                    robs_up = np.histogram( self.spk_ts[a], np.arange(NT*frac+1)*dt)[0]
+                    robs_up = np.histogram( self.spk_ts[ee][a], np.arange(NT*frac+1)*dt)[0]
                     self.robs_upsample[tindx*frac:(tindx+NT)*frac, cindx+cc] = robs_up[:(NT*frac+1)].astype(np.uint8)
     # END MultiClouds.set_upsample()
 
@@ -1704,7 +1709,7 @@ class MultiClouds(SensoryBase):
             Ystart, Yend = sum(self.exptNC[:i]), sum(self.exptNC[:(i+1)])
             mask[Xstart:Xend, Ystart:Yend] = 1
 
-        drift_pop.networks[0].layers[0].set_mask(mask)
+        drift_pop.networks[0].layers[0].set_mask(mask.detach().clone())
 
         if drift_terms is not None:
             drift_pop.networks[0].layers[0].weight.data = torch.tensor( drift_terms, dtype=torch.float32)
