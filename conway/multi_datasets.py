@@ -1703,13 +1703,13 @@ class MultiClouds(SensoryBase):
             drift_pop.set_parameters( val=False, name='weight')
 
         # define mask
-        mask = torch.zeros(drift_pop.networks[0].layers[0].weight.data.shape)
+        mask = np.zeros(drift_pop.networks[0].layers[0].weight.data.shape)
         for i in range(len(self.exptNA)):
             Xstart, Xend = sum(self.exptNA[:i]), sum(self.exptNA[:(i+1)])
             Ystart, Yend = sum(self.exptNC[:i]), sum(self.exptNC[:(i+1)])
             mask[Xstart:Xend, Ystart:Yend] = 1
 
-        drift_pop.networks[0].layers[0].set_mask(mask.detach().clone())
+        drift_pop.networks[0].layers[0].set_mask(mask)
 
         if drift_terms is not None:
             drift_pop.networks[0].layers[0].weight.data = torch.tensor( drift_terms, dtype=torch.float32)
