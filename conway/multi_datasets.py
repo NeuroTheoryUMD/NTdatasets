@@ -1029,14 +1029,6 @@ class MultiClouds(SensoryBase):
                 if L is None:
                     L = self.L
                 assert L is not None, "Need to specify stimulus size"
-                #if self.L is not None:
-                #    if self.Nexpts == 1:
-                #        print('BUILD_STIM: changing L')
-                #        self.L = L
-                #        self.stim_dims[1] = L
-                #        self.stim_dims[2] = L
-                #    else:
-                #        assert L == self.L, "BUILD_STIM: size of stimuli much match. L=%d"%self.L 
                 stim_pos = [top_corner[0], top_corner[1], top_corner[0]+L, top_corner[1]+L]
 
             if eyepos is not None:
@@ -1047,7 +1039,7 @@ class MultiClouds(SensoryBase):
                     stim_pos[1]-BUF,
                     stim_pos[2]+BUF,
                     stim_pos[3]+BUF]
-                print( "  Stim expansion for shift:", stim_pos)
+                print( "  Stim expansion for shift:", np.array(stim_pos, dtype=int))
                 L += 2*BUF
 
             if self.luminance_only:
@@ -1064,14 +1056,6 @@ class MultiClouds(SensoryBase):
             locsET = self.file_info[expt_n]['stim_locsET']
             stimLP_base = np.array(self.fhandles[expt_n]['stim'][self.tranges[expt_n], ...], dtype=np.int8)
             locsLP = self.file_info[expt_n]['stim_locsLP']
-            #fhandle = self.fhandles[expt_n]
-            #sz = fhandle['stim'].shape
-            #inds = np.arange(sz[0], dtype=np.int64)
-
-            #stimET_base = np.array(self.fhandles[expt_n]['stimET'][self.tranges[expt_n], ...], dtype=np.int8)
-            #stimLP_base = np.array(self.fhandles[expt_n]['stim'][self.tranges[expt_n], ...], dtype=np.int8)
-            #locsET = self.file_info[expt_n]['stim_locsET']
-            #locsLP = self.file_info[expt_n]['stim_locsLP']
             sz = stimLP_base.shape
 
             # At this point, stimLP_base and (maybe) stimET_base are over tranges and all colors
@@ -1112,7 +1096,6 @@ class MultiClouds(SensoryBase):
                     if self.luminance_only:
                         if stimET_base is not None: 
                             stimET = stimET[:, 0, ...][:, None, ...]  # maintain 2nd dim (length 1)
-                    #print(np.sum(abs(stimET)), np.sum(abs(stimLP)))
          
             NT = self.exptNT[expt_n]
             newstim = np.zeros( [NT, num_dim0, L, L], dtype=np.int8 )
@@ -1133,7 +1116,6 @@ class MultiClouds(SensoryBase):
                         strip[:, :, :, OVLP['targetY']] = deepcopy((stimET[:, :, OVLP['readX'], :][:, :, :, OVLP['readY']]))
                         newstim[:, :, OVLP['targetX'], :] = deepcopy(strip) 
 
-            #stim = torch.tensor( newstim, dtype=torch.float32, device=self.device )
         # Note stim stored in numpy is being represented as full 3-d + 1 tensor (time, channels, NX, NY)
         self.stim_pos = deepcopy(stim_pos)
 
@@ -1170,7 +1152,6 @@ class MultiClouds(SensoryBase):
             if len(eyepos) < newstim.shape[0] and self.binocular:
                 print('  Eyepos shorter than stim: padding monocular segments with zeros')
                 eyepos_padded=np.zeros((newstim.shape[0], 2))
-                #LRpresent = self.file_info[expt_n]['LRpresent'][self.tranges[expt_n]]
 
                 bin_inds=np.where(LRpresent==3)[0]
                 if len(bin_inds)!=len(eyepos):
