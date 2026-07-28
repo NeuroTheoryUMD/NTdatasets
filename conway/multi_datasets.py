@@ -933,7 +933,7 @@ class MultiClouds(SensoryBase):
             time_embed=0, 
             eyepos=None, BUF=20, # eye position (not shifts)
             stim_crop=None,
-            LMS=False,
+            LMS=None,
             fixdot=0 ):
         """
         This assembles a stimulus from the raw numpy-stored stimuli into self.stim
@@ -952,15 +952,12 @@ class MultiClouds(SensoryBase):
             eyepos (np.array): eye position
             BUF (int): buffer for eye position
             stim_crop (list): crop the stimulus
-            LMS (bool): whether to use LMS
+            LMS (bool): whether to use LMS (default None, which uses self.LMS)
             fixdot (int): fixation point
 
         Returns:
             None
         """
-
-        #eyepos = shifts   # shifts that is passed in is actually the eye position
-        
         if self.Nexpts == 1:
             expt_n = 0
         else:
@@ -970,13 +967,18 @@ class MultiClouds(SensoryBase):
             stim_deltas = self.file_info[expt_n]['stim_location_deltas'][self.block_ranges[expt_n]]
             assert np.sum(abs(stim_deltas)) == 0, "BUILD_STIM: There are stim-deltas but not implemented yet."
         # Delete existing stim and clear cache to prevent memory issues on GPU
+
         if eyepos is not None:  # make sure empty list is same as None
             if len(eyepos) == 0:
                 eyepos = None
         need2crop = False
+
+        if LMS is None:
+            LMS = self.LMS
+        else:
+            self.LMS = LMS
         if LMS:
             assert not self.luminance_only, "Cannot convert color spaces if luminance-only."
-        self.LMS = LMS
 
         locsET = self.file_info[expt_n]['stim_locsET']
         locsLP = self.file_info[expt_n]['stim_locsLP']
@@ -1022,6 +1024,8 @@ class MultiClouds(SensoryBase):
                 #L = self.stim_pos[2]-self.stim_pos[0]
                 assert stim_pos[3]-stim_pos[1] == stim_pos[2]-stim_pos[0], "Stim must be square (for now)"
                 if L is not None:
+                    if stim_pos[3]-stim_pos[1] != L:
+                        print( "  Warning: stim_pos and L do not match: using stim_pos to determine L" )
                     assert L == stim_pos[3]-stim_pos[1], "L does not match specified stim size"
                 else:
                     L = stim_pos[3]-stim_pos[1]
@@ -1057,9 +1061,6 @@ class MultiClouds(SensoryBase):
             stimLP_base = np.array(self.fhandles[expt_n]['stim'][self.tranges[expt_n], ...], dtype=np.int8)
             locsLP = self.file_info[expt_n]['stim_locsLP']
             sz = stimLP_base.shape
-
-            # At this point, stimLP_base and (maybe) stimET_base are over tranges and all colors
-            # next part will make appropriately sized/sampled versions of each into stimET and stimLP
 
             # BINOCULAR STIMULUS 
             if self.binocular:
@@ -1099,6 +1100,7 @@ class MultiClouds(SensoryBase):
          
             NT = self.exptNT[expt_n]
             newstim = np.zeros( [NT, num_dim0, L, L], dtype=np.int8 )
+
             for ii in range(locsLP.shape[1]):
                 OVLP = self.rectangle_overlap_ranges(stim_pos, locsLP[:, ii])
                 if OVLP is not None:
@@ -1137,12 +1139,14 @@ class MultiClouds(SensoryBase):
         ######### SHIFT STIMULUS ######### 
         if eyepos is not None:
             # Would want to shift by input eye positions if input here
-            if len(eyepos.shape) > 2:
-                assert self.binocular, "BUILD_STIM: Eyepos is eye specific but stimulus is not binocular."
-            else:
+            if len(eyepos.shape) == 2:
                 if self.binocular:
                     print('Only a single eye position passed in: using same for both eyes')
                     eyepos = np.repeat(eyepos[...,None],2, axis=2)
+            else:
+                if not self.binocular:
+                    print('Internal buildstim -- taking mean eye position across eyes')
+                    eyepos = np.mean(eyepos, axis=2)
 
             print('  Shifting stim...')
             # samples eyepos at appropriate time range (if eyepos longer than stim)
@@ -1189,21 +1193,25 @@ class MultiClouds(SensoryBase):
 
         self.L = int(L)
         self.time_embed = time_embed
-        #else:
-        #    assert self.time_embed == time_embed, "time_embed setting must match"
             
         if time_embed > 0:
             #self.stim_dims[3] = num_lags  # this is set by time-embedding
             if time_embed == 2:
                 newstim = self.time_embedding( newstim, nlags=self.num_lags )
         # now stimulus is represented as full 4-d + 1 tensor (time, channels, NX, NY, num_lags)
-
+        
         # Translate to cone-isolating stimmulus if DKL is false
         if LMS:
             # Make LMS conversion matrix
             DKL2LMS = np.array([[0.7586, 0.6515, 0], [0.5536, -0.8328, 0], [0.5000, 0, 0.8660]], dtype=np.float32)
             print( '  Converting to LMS space')
-            newstim = np.einsum( 'axcd,bx->abcd', newstim, DKL2LMS)
+            if self.binocular:
+                assert newstim.shape[1] == 6, "stim dimensions not consistent with binocular color stimulus"
+                #newstim = newstim.reshape( [-1, 2, 3, newstim.shape[2], newstim.shape[3]] ) # expose color away from binocular
+                newstim = np.einsum( 'texhw,xy->teyhw', newstim.reshape( [-1, 2, 3, L, L] ), DKL2LMS)
+                print('converted here')
+            else:
+                newstim = np.einsum( 'axcd,bx->abcd', newstim, DKL2LMS)
 
         # Flatten stim 
         self.expt_stims[expt_n] = deepcopy(newstim.reshape([self.exptNT[expt_n], -1]))
@@ -1253,12 +1261,16 @@ class MultiClouds(SensoryBase):
         Returns: 
             np.array: array of stas for each cell and lag
         """
+        assert self.stim_dims is not None, "Need to assemble stim before calculating stas."
+
         if lags is None:
             lags = np.arange(3,6)
         if clist is None:
-            clist = np.arange(self.NC)
-
-        assert self.stim_dims is not None, "Need to assemble stim before calculating stas."
+            if len(self.cells_out) > 0:
+                clist = deepcopy(self.cells_out)
+            else:
+                clist = np.arange(self.NC)
+        NC = len(clist)
 
         Reff = (self[:]['robs'] * self[:]['dfs'])[:, clist]
         nspks = torch.sum(Reff, axis=0)
@@ -1268,16 +1280,17 @@ class MultiClouds(SensoryBase):
                 print( "  Computing lag %d"%lag )
             stas.append( (self[:]['stim'][:-lag, ...].T @ Reff[lag:,:]/nspks[None, :]).cpu().numpy())
         stas = np.stack(stas, axis=0)
-        RFcenters = np.zeros( (len(clist), 2), dtype=int )
-        best_lags = np.zeros( len(clist), dtype=int )
+        RFcenters = np.zeros( (NC, 2), dtype=int )
+        best_lags = np.zeros( NC, dtype=int )
+
         if to_plot:
             import matplotlib.pyplot as plt
             if self.stim_dims[0] == 1:
-                nrows = int(np.ceil(len(clist)/6))
+                nrows = np.maximum(1, int(np.ceil(NC/6)))
                 #stas = stas.reshape([len(lags), self.stim_dims[0],self.stim_dims[1],self.stim_dims[2],len(clist)])
                 stas = stas.reshape([len(lags), self.stim_dims[1],self.stim_dims[2],len(clist)])
                 utils.ss(nrows,6, rh=2.7)
-                for cc in range(len(clist)):
+                for cc in range(NC):
                     # find best lag
                     best_lag, x0, y0 = utils.max_multiD(abs(stas[...,cc]))
                     RFcenters[cc, :] = [x0, y0]
@@ -1289,12 +1302,13 @@ class MultiClouds(SensoryBase):
             else:
                 nchan = self.stim_dims[0]
                 assert nchan in [2,3,6], "Currently only set up to plot stas with 2, 3, or 6 channels (i.e. binocular or color), but should do more sometime"
-                nrows = int(np.ceil(len(clist)/(6//nchan)))
+                nrows = int(np.ceil(NC/(6//nchan)))
+
                 stas = stas.reshape([len(lags), self.stim_dims[0], self.stim_dims[1],self.stim_dims[2],len(clist)])
                 utils.ss(nrows,6, rh=2.7)
-                for cc in range(len(clist)):
+                for cc in range(NC):
                     # find best lag
-                    best_lag, x0, y0 = utils.max_multiD(np.max(abs(stas[...,cc], axis=1)))
+                    best_lag, x0, y0 = utils.max_multiD(np.max(abs(stas[...,cc]), axis=1))
                     RFcenters[cc, :] = [x0, y0]
                     best_lags[cc] = lags[best_lag]
                     m = np.max(abs(stas[...,cc]))
@@ -1309,9 +1323,9 @@ class MultiClouds(SensoryBase):
         info_dict = {'RFcenters': RFcenters, 'nspks': nspks}
 
         if to_reshape:
-            stas = stas.reshape([len(lags), self.stim_dims[0],self.stim_dims[1],self.stim_dims[2],len(clist)]).squeeze()
+            stas = stas.reshape([len(lags), self.stim_dims[0],self.stim_dims[1],self.stim_dims[2],NC]).squeeze()
         else:
-            stas = stas.reshape([len(lags), -1, len(clist)])
+            stas = stas.reshape([len(lags), -1, NC])
         if return_dict:
             return stas, info_dict
         else:
