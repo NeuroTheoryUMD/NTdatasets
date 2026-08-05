@@ -30,7 +30,7 @@ class binocular_singleT(SensoryBase):
             """
 
         assert expt_num is not None, "Binocular experiment number needed (expt_n)."
-        filename = 'B2Texpt'+ str(expt_num) + '.mat'
+        filename = 'Bexpt'+ str(expt_num) + '.mat'
 
         # call parent constructor
         super().__init__(
@@ -42,36 +42,33 @@ class binocular_singleT(SensoryBase):
         self.upsample = 1
         self.robs_upsample = None
         self.dfs_upsample = None
+        self.stim_upsample = None
+        self.spike_times = np.zeros((0,2))
 
         if verbose:
             print( "Loading", self.datadir + filename)
 
         # Store stimulus trimmed to 36 - 36 binocular configuration
         stim_trim = np.concatenate( (np.arange(3,39), np.arange(45,81)))
-        #Bmatdat = h5py.File(self.datadir + filename, 'r')
-        Bmatdat = sio.loadmat(self.datadir + filename, squeeze_me=True)
-        #self.Bstim = np.transpose(Bmatdat['stim'])[:, stim_trim]
-        self.Bstim = np.array(Bmatdat['stim'], dtype=np.float32)[:, stim_trim]
+        Bmatdat = h5py.File(self.datadir + filename, 'r')
+        self.Bstim = np.transpose(Bmatdat['stimulus'])[:, stim_trim]
 
         self.dims = [1, 72, 1, 1]
-        self.divide_stim = False
+        self.divide_stim=False
+        # Note Bstim is stored as numpy
 
         # Responses
-        self.unit_index = np.array(Bmatdat['unit_raw_index'], dtype=int)
-        self.spk_times = np.array(Bmatdat['spk_times'], dtype=np.float32)
-        self.spk_ids = np.array(Bmatdat['spk_ids'], dtype=int)
-
-        RobsSU = np.array(Bmatdat['RobsSU'], dtype=np.float32)
-        dfsSU = np.array(Bmatdat['SUdata_filter'], dtype=np.float32)
+        RobsSU = np.transpose(Bmatdat['binned_SU'])
+        dfsSU = np.transpose(Bmatdat['data_filters'])
         self.NT, self.numSUs = RobsSU.shape
 
-        RobsMU = np.array(Bmatdat['RobsMU'], dtype=np.float32)
+        RobsMU = np.transpose(Bmatdat['binned_MUA'])
         self.numMUs = RobsMU.shape[1]
     
         if self.include_MUs:
             self.NC = self.numSUs + self.numMUs
 
-            dfsMU = np.transpose(Bmatdat['MUdata_filter'])
+            dfsMU = np.transpose(Bmatdat['data_filters_MUA'])
 
             self.robs = torch.tensor(
                 np.concatenate( (RobsSU, RobsMU), axis=1 ),
@@ -85,31 +82,87 @@ class binocular_singleT(SensoryBase):
             self.dfs = torch.tensor(dfsSU, dtype=torch.float32 )
 
         # used_inds and XV
-        used_inds = np.add(np.array(Bmatdat['used_inds'], dtype=np.int32), -1) # note adjustment for python v matlab indexing
+        used_inds = np.add(np.array(Bmatdat['used_inds'], dtype=np.int32)[0,:], -1) # note adjustment for python v matlab indexing
         # implement within datafilters:
         df_mult = np.zeros([self.NT,1], dtype=np.float32)
         df_mult[used_inds] = 1.0
         self.dfs *= df_mult
 
-        # Hard-code block_inds since each trial is 3 sec = 300 time points
-        for ii in range(0, self.NT, 300):
-            self.block_inds.append(np.arange(ii, min(ii+300, self.NT)))
+        #Trial Starts and Ends
+        start_times_refs = Bmatdat['trial_data']['start_times'][0]
+        end_times_refs = Bmatdat['trial_data']['end_times'][0]
 
-        # Spike times (only SUs)
-        self.Ui_analog = Bmatdat['Ui_analog'].squeeze()  # these are automatically in register
-        self.XiA_analog = Bmatdat['XiA_analog'].squeeze()
-        self.XiB_analog = Bmatdat['XiB_analog'].squeeze()
-        # also combine two cross-validation datasets
-        self.Xi_analog = self.XiA_analog+self.XiB_analog  # since they are non-overlapping, will make 1 in both places
+        trial_starts = np.zeros(len(start_times_refs))
+        trial_ends = np.zeros(len(end_times_refs))
+
+        for i in range(len(start_times_refs)):
+            trial_starts[i] = Bmatdat[start_times_refs[i]][0][0] #getting data out of mat file structure is strange sometimes
+            trial_ends[i] = Bmatdat[end_times_refs[i]][0][0]
+
+        #Spike Times (only SUs)
+        num_probes = len(Bmatdat['spike_data']['SU_spk_times'][0])
+        spike_times_tmp = np.zeros((0,2))
+        cell_num = 0
+        n_filter = 0
+
+        for i in range(num_probes):
+            
+            SU_spike_times_ref = Bmatdat['spike_data']['SU_spk_times'][0][i]
+            unlabeled_spike_times = Bmatdat[SU_spike_times_ref][0]
+            
+            if np.isscalar(unlabeled_spike_times):
+                # probes with no data have a 0 instead of the spike times array
+                continue
+            
+            n_filter += 1
+            if np.sum(Bmatdat['data_filters'][n_filter-1]) == 0:
+                #somtimes cell is excluded entirely in dfs, but still has spike times
+                continue
+
+            spike_num = len(unlabeled_spike_times)
+            cell_nums = cell_num*np.ones(spike_num) #for labeling spikes
+            cell_num += 1
+            
+            labeled_spike_times = np.stack((cell_nums,unlabeled_spike_times), axis=1)
+            spike_times_tmp = np.concatenate((spike_times_tmp,labeled_spike_times),axis=0)
+        
+
+        print(' Spike Times Processing')
+        Ntrials = len(Bmatdat['time_data']['trial_flip_inds'])
+        for i in range(Ntrials): #loop over number of trials
+            while np.isnan(trial_starts[i]) or np.isnan(trial_ends[i]): #at least one experiment had an extra nan end time that messed up training
+                trial_starts = np.delete(trial_starts, i)
+                trial_ends = np.delete(trial_ends, i)
+
+            t0 = trial_starts[i]
+            t_end = trial_ends[i]
+            spk_tr_inds = np.where((spike_times_tmp[:,1]>=t0) & (spike_times_tmp[:,1]<=t_end))[0]#find spikes in a trial
+            spike_times_tmp[spk_tr_inds,1] -= trial_starts[i]# subtract the trial start time from those spike times
+            
+            spike_tot_times = spike_times_tmp[spk_tr_inds]
+            spike_tot_times[:,1] += (Bmatdat['time_data']['trial_flip_inds'][i]-1)*self.dt #add trial start times relative to time bins 
+            
+            self.spike_times = np.concatenate([self.spike_times,deepcopy(spike_tot_times)], axis=0)
+        
+        # for i in np.unique(self.spike_times[:,0]): #debugging
+        #     inds = np.where(self.spike_times[:,0]==i)[0]
+        #     sum = len(inds)
+        #     print("number of spikes for cell %i: %i" % (i, sum))
+
+        # self.Ui_analog = Bmatdat['Ui_analog'][:,0]  # these are automatically in register
+        # self.XiA_analog = Bmatdat['XiA_analog'][:,0]
+        # self.XiB_analog = Bmatdat['XiB_analog'][:,0]
+        # # two cross-validation datasets -- for now combine
+        # self.Xi_analog = self.XiA_analog+self.XiB_analog  # since they are non-overlapping, will make 1 in both places
 
         # # Derive full-dataset Ui and Xi from analog values
-        self.used_inds = used_inds
-        self.train_inds = np.intersect1d(used_inds, np.where(self.Ui_analog > 0)[0])
-        self.val_inds = np.intersect1d(used_inds, np.where(self.Xi_analog > 0)[0])
-        self.val_indsA = np.intersect1d(used_inds, np.where(self.XiA_analog > 0)[0])
-        self.val_indsB = np.intersect1d(used_inds, np.where(self.XiB_analog > 0)[0])
+        # self.used_inds = used_inds
+        # self.train_inds = np.intersect1d(used_inds, np.where(self.Ui_analog > 0)[0])
+        # self.val_inds = np.intersect1d(used_inds, np.where(self.Xi_analog > 0)[0])
+        # self.val_indsA = np.intersect1d(used_inds, np.where(self.XiA_analog > 0)[0])
+        # self.val_indsB = np.intersect1d(used_inds, np.where(self.XiB_analog > 0)[0])
 
-        dispt_raw = np.transpose(Bmatdat['all_disps'])
+        dispt_raw = np.transpose(Bmatdat['all_disps'])[:,0]
         # this has the actual disparity values, which are at the resolution of single bars, and centered around the neurons
         # disparity (sometime shifted to drive neurons well)
         # Sometimes a slightly disparity is used, so it helps to round the values at some resolution
@@ -119,8 +172,8 @@ class binocular_singleT(SensoryBase):
             print('  dispt-fix for expt 10') 
             self.dispt[self.dispt > 0.5] = -1005
 
-        self.frs = np.transpose(Bmatdat['all_frs'])
-        self.corrt = np.transpose(Bmatdat['all_corrs'])
+        self.frs = np.transpose(Bmatdat['all_Frs'])[:,0]
+        self.corrt = np.transpose(Bmatdat['all_corrs'])[:,0]
         # Make dispt consistent with corrt (early experiments had dispt labeled incorrectly)
         corr_funny = np.where((self.corrt == 0) & (self.dispt != -1005))[0]
         if len(corr_funny) > 0:
@@ -131,17 +184,16 @@ class binocular_singleT(SensoryBase):
         # where it is -1009 this corresponds to a blank frame
         # where it is -1005 this corresponds to uncorrelated images between the eyes
 
-        if not 'rep_inds' in Bmatdat:
-            #rep_inds = [None]*numSUs
-            rep_inds = None
-        elif Bmatdat['rep_inds'][0].shape[0] < 10:  # check first cell rep_inds to make sure valid
-            print("Warning: valid rep_inds not found in dataset.")
-            rep_inds = None
-        else:
-            rep_inds = []
-            for cc in range(self.numSUs):
-                rep_inds.append( np.add(Bmatdat['rep_inds'][cc], -1) ) 
-        self.rep_inds = rep_inds
+        # if Bmatdat['rep_inds'] is None:
+        #     #rep_inds = [None]*numSUs
+        #     rep_inds = None
+        # elif len(Bmatdat['rep_inds'][0][0]) < 10:
+        #     rep_inds = None
+        # else:
+        #     rep_inds = []
+        #     for cc in range(self.numSUs):
+        #         rep_inds.append( np.add(Bmatdat['rep_inds'][0][cc], -1) ) 
+        # self.rep_inds = rep_inds
 
         if verbose:
             print( "Expt %d: %d SUs, %d total units, %d out of %d time points used."%(expt_num, self.numSUs, self.NC, len(used_inds), self.NT))
@@ -165,26 +217,20 @@ class binocular_singleT(SensoryBase):
             self.skip_lags = skip_lags
             
         # Shift stimulus by skip_lags (note this was prev multiplied by DF so will be valid)
+        stim = deepcopy(self.Bstim)
         assert self.skip_lags >= 0, "Negative skip_lags does not make sense"
-
-        if self.upsample == 1:
-            stim = deepcopy(self.Bstim)
-            skip_lags = self.skip_lags
-        else:
-            stim = np.repeat(deepcopy(self.Bstim), self.upsample, axis=0)
-            skip_lags = self.skip_lags*self.upsample
-
-        if skip_lags > 0:
-            stim[skip_lags:, :] = deepcopy( stim[:-skip_lags, :] )
-            stim[skip_lags, :] = 0.0
+        if self.skip_lags > 0:
+            stim[self.skip_lags:, :] = deepcopy( stim[:-self.skip_lags, :] )
+            stim[:self.skip_lags, :] = 0.0
 
         self.stim_dims = deepcopy(self.dims)
         if time_embed == 0:
             self.stim = torch.tensor( self.Bstim, dtype=torch.float32 )
+            self.stim_dims = deepcopy(self.dims)
         else:
-            if num_lags is None: # then read from dataset
+            if num_lags is None:
+                # then read from dataset (already set):
                 num_lags = self.num_lags
-            num_lags = num_lags*self.upsample
             self.stim = self.time_embedding( stim=stim, nlags=num_lags, verbose=verbose )
             # This will return a torch-tensor
             self.stim_dims[3] = num_lags
@@ -210,16 +256,19 @@ class binocular_singleT(SensoryBase):
 
         idx = self.index_to_array(idx,self.NT)
         if self.upsample > 1:
-            idx = (np.repeat(idx[:, None]*self.upsample, self.upsample, axis=1)+ np.arange(self.upsample)[None,:]).reshape([-1])
+            new_index = (np.repeat(idx[:, None]*self.upsample, self.upsample, axis=1)+ np.arange(self.upsample)[None,:]).reshape([-1])
+
+            stim = self.stim_upsample
             robs = self.robs_upsample
             dfs = self.dfs_upsample
         else:
+            stim = self.stim
             robs = self.robs
             dfs = self.dfs
 
         if len(self.cells_out) == 0:
             out = {
-                'stim': self.stim[idx, :], 
+                'stim': stim[idx, :], 
                 'robs': robs[idx, :],
                 'dfs': dfs[idx, :]}
             #if self.speckled:
@@ -229,7 +278,7 @@ class binocular_singleT(SensoryBase):
             robs_tmp =  robs[:, self.cells_out]
             dfs_tmp =  dfs[:, self.cells_out]
             out = {
-                    'stim': self.stim[idx, :], 
+                    'stim': stim[idx, :], 
                     'robs': robs_tmp[idx, :],
                     'dfs': dfs_tmp[idx, :]}
             
@@ -258,46 +307,40 @@ class binocular_singleT(SensoryBase):
             None, but modifies self.upsample and self.robs_upsample
         """
         assert frac >= 1, "frac must be a positive integer"
+
         upsample_mult = frac/self.upsample
-        self.upsample = frac
-
         if upsample_mult > 1:
-            print( "  Upsampling by %d: changing num_lags with dataset to %d"%(frac, self.num_lags*frac) )
-        elif upsample_mult < 1:
-            print( "  Downsampling by %d: changing num_lags with dataset to %d"%(frac, self.num_lags*frac) )
+            print( "  Upsampling by %d: changing num_lags with dataset to %d"%(frac, self.num_lags*upsample_mult) )
+            
+        orig_lags = int(self.num_lags/self.upsample)
+        self.num_lags = int(self.num_lags*upsample_mult)
 
-        if upsample_mult != 1:
-            self.prepare_stim(time_embed=self.time_embed, verbose=False)
-        #orig_lags = int(self.num_lags/self.upsample)
-        #self.num_lags = int(self.num_lags*upsample_mult)
-
+        self.upsample = frac
         if frac == 1:
-            # No upsampling needed
-            self.dfs_upsample = None
             self.robs_upsample = None
+            self.dfs_upsample = None
+            self.stim_upsample = None
             return
         else:
-            assert self.spk_times is not None, "No spike time information in dataset."
+            assert self.spike_times[:,0] is not None, "No spike time information in dataset."
         
-        self.dfs_upsample = np.repeat(self.dfs, frac, axis=0)
-
-        # Generate new robs at higher time resolution
         dt = self.dt/frac
-
         self.robs_upsample = np.zeros([self.NT*frac, self.NC], dtype=np.uint8 )
+
         for cc in range(self.NC):
-            a = np.where(self.spk_ids[:] == cc+1)[0] 
+            a = np.where(self.spike_times[:,0] == cc)[0] 
             if len(a) > 0:
-                robs_up = np.histogram(self.spk_times[a], bins=np.arange(self.NT*frac+1)*dt)[0]
+                robs_up = np.histogram(self.spike_times[a,1], np.arange(self.NT*frac+1)*dt)[0]
                 # print(robs_up.shape, self.robs_upsample[:, cc].shape)
                 self.robs_upsample[:, cc] = robs_up.astype(np.uint8)
 
-        # this is handled now in prepare_stim
-        #if not self.time_embed:
-        #    self.stim_upsample = np.repeat(self.stim,frac,axis=0)
-        #else:
-        #    self.stim_upsample = self.time_embedding(np.repeat(self.stim[:,::orig_lags],frac,axis=0))
-        #    self.stim_dims[3] = self.num_lags
+        if not self.time_embed:
+            self.stim_upsample = np.repeat(self.stim,frac,axis=0)
+        else:
+            self.stim_upsample = self.time_embedding(np.repeat(self.stim[:,::orig_lags],frac,axis=0))
+            self.stim_dims[3] = self.num_lags
+        
+        self.dfs_upsample = np.repeat(self.dfs,frac,axis=0)
 
         if self.device is None:
             device = torch.device("cpu")
