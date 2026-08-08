@@ -64,11 +64,11 @@ class Vision2Dsimple(SensoryBase):
             self.num_units = np.array(f['NCs'][:,0], dtype=np.int64)
             # Handle Robs
             if include_opto != 1:
-                self.robs = torch.tensor(f['Robs'], dtype=torch.float32, device=self.device)
+                self.robs = torch.tensor(np.array(f['Robs']), dtype=torch.float32, device=self.device)
             else:
-                self.robs = torch.tensor(f['RobsOpto'], dtype=torch.float32, device=self.device)
+                self.robs = torch.tensor(np.array(f['RobsOpto']), dtype=torch.float32, device=self.device)
             if include_opto == 2:
-                self.robs = torch.cat( (self.robs, torch.tensor(f['RobsOpto'], dtype=torch.float32, device=self.device)), axis=1)
+                self.robs = torch.cat( (self.robs, torch.tensor(np.array(f['RobsOpto']), dtype=torch.float32, device=self.device)), axis=1)
             self.robs = self.robs.t()  # matlab reverses order
 
             # Process data and DFs
