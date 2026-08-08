@@ -201,10 +201,12 @@ class binocular_singleT(SensoryBase):
             None
         """
         NX = self.stim_dims[1]//2
-        stim = self.stim.reshape([self.NT, 2*NX, self.num_lags])
+        print('WARNING: separate_eyes() is not fully tested for upsample > 1')
+        stim = self.stim.reshape([self.NT*self.upsample, 2*NX, self.num_lags])
         self.stimL = stim[:, :NX, :].reshape([self.NT, -1])
         self.stimR = stim[:, NX:, :].reshape([self.NT, -1])
         self.divide_stim = val
+    # END binocular_single.separate_eyes()
 
     def __getitem__(self, idx):
 
@@ -238,7 +240,10 @@ class binocular_singleT(SensoryBase):
             out['stimR'] = self.stimR[idx, :]
 
         if self.Xdrift is not None:
-            out['Xdrift'] = self.Xdrift[idx, :]
+            if self.upsample > 1:
+                out['Xdrift'] = self.Xdrift[idx//self.upsample, :]
+            else:
+                out['Xdrift'] = self.Xdrift[idx, :]
 
         #if len(self.covariates) > 0:
         #   self.append_covariates( out, idx)

@@ -496,7 +496,7 @@ def disparity_predictions_drift(
     return dpred, tpred
 
 
-def binocular_model_performance( data=None, cell_n=0, Rpred=None, model=None, valset=None, verbose=True ):
+def binocular_model_performance( dataset=None, cell_n=0, Rpred=None, model=None, valset=None, verbose=True ):
     """
     Current best-practices for generating prediction quality of neuron and binocular tuning. Currently we
     are not worried about using cross-validation indices only (as they are based on much less data and tend to
@@ -515,35 +515,46 @@ def binocular_model_performance( data=None, cell_n=0, Rpred=None, model=None, va
         BMP: dictionary with all the information about the binocular model performance
     """
 
-    assert data is not None, 'Need to include dataset'
+    assert dataset is not None, 'Need to include dataset'
     #assert cell_n is not None, 'Must specify cell to check'
 
-    #import torch
-    #if not isinstance( Rpred, torch.Tensor):
-    #    Rpred = torch.tensor( Rpred, dtype=torch.float32 )
     if Rpred is None:
         assert model is not None, "Either Rpred or model must be specified"
-        cells_out_save = deepcopy(data.cells_out)
-        data.set_cells(cell_n)
-        Rpred = model(data[:]).detach()
+        cells_out_save = deepcopy(dataset.cells_out)
+        dataset.set_cells(cell_n)
+        Rpred = model(dataset[:]).detach().cpu().numpy()
     if len(Rpred.shape) == 1:
         Rpred = Rpred[:, None]
-    
+
+    # Temporal resolution check: over-sampled model must be downsampled
+    NT = dataset.robs.shape[0]
+    if len(Rpred) > NT:
+        if not 'upsample' in dataset.__dict__.keys():
+            raise ValueError("Model prediction is longer than data, but no upsample factor found in data")
+        assert len(Rpred)/dataset.upsample == NT, "Model prediction is longer than data, but upsample factor does not match"
+        # Downsample model prediction if necessary
+        print('Downsampling data to frame resolution (upsample=%d)'%dataset.upsample)
+        r = Rpred[::dataset.upsample]
+        for ii in range(1, dataset.upsample):
+            r += Rpred[ii::dataset.upsample]
+    else:
+        r = Rpred
+
     ## GENERAL COMPUTATIONS on data (cell-specific but not yet model-specific, using as much data as can)
     # make disparity predictions for all conditions
-    dobs0, tobs0 = disparity_predictions( data, cell_n=cell_n, spiking=True, rectified=True )
-    dmod0, tmod0 = disparity_predictions( data, resp=Rpred, cell_n=cell_n, spiking=True, rectified=True )
+    dobs0, tobs0 = disparity_predictions( dataset, cell_n=cell_n, spiking=True, rectified=True )
+    dmod0, tmod0 = disparity_predictions( dataset, resp=r, cell_n=cell_n, spiking=True, rectified=True )
 
-    dobs3, tobs3 = disparity_predictions( data, cell_n=cell_n, fr1or3=3, spiking=True, rectified=True )
-    dmod3, tmod3 = disparity_predictions( data, resp=Rpred, cell_n=cell_n, fr1or3=3, spiking=True, rectified=True )
+    dobs3, tobs3 = disparity_predictions( dataset, cell_n=cell_n, fr1or3=3, spiking=True, rectified=True )
+    dmod3, tmod3 = disparity_predictions( dataset, resp=r, cell_n=cell_n, fr1or3=3, spiking=True, rectified=True )
 
-    dobs1, tobs1 = disparity_predictions( data, cell_n=cell_n, fr1or3=1, spiking=True, rectified=True )
-    dmod1, tmod1 = disparity_predictions( data, resp=Rpred, cell_n=cell_n, fr1or3=1, spiking=True, rectified=True )
+    dobs1, tobs1 = disparity_predictions( dataset, cell_n=cell_n, fr1or3=1, spiking=True, rectified=True )
+    dmod1, tmod1 = disparity_predictions( dataset, resp=r, cell_n=cell_n, fr1or3=1, spiking=True, rectified=True )
 
     # This necessarily takes data-filters into account, but not cross-validation inds
-    ev, tv = explainable_variance( data, cell_n=cell_n, verbose=verbose )
-    ev3, tv3 = explainable_variance( data, cell_n=cell_n, fr1or3=3, verbose=verbose )
-    ev1, tv1 = explainable_variance( data, cell_n=cell_n, fr1or3=1, verbose=verbose )
+    ev, tv = explainable_variance( dataset, cell_n=cell_n, verbose=verbose )
+    ev3, tv3 = explainable_variance( dataset, cell_n=cell_n, fr1or3=3, verbose=verbose )
+    ev1, tv1 = explainable_variance( dataset, cell_n=cell_n, fr1or3=1, verbose=verbose )
     
     if ev == tv:
         ev_valid = False
@@ -554,9 +565,9 @@ def binocular_model_performance( data=None, cell_n=0, Rpred=None, model=None, va
         print( "  Overall explainable variance fraction: %0.3f"%(ev/tv) )
 
     #### Model and data properties (not performance yet)
-    indxs3 = np.where(data.frs == 3)[0]
-    indxs1 = np.where(data.frs == 1)[0]
-    df = data.dfs[:, cell_n].detach().numpy()
+    indxs3 = np.where(dataset.frs == 3)[0]
+    indxs1 = np.where(dataset.frs == 1)[0]
+    df = dataset.dfs[:, cell_n].detach().numpy()
 
     # Have to use same (df) inds as overall explainable variance to make fractions directly valid
     dv_obs = varDF(dobs0-tobs0, df=df)
@@ -573,32 +584,29 @@ def binocular_model_performance( data=None, cell_n=0, Rpred=None, model=None, va
     vars_obs_FR3 = [tv3, ev3, dv_obs3, ev3-dv_obs3 ]  # total, explainable, disp_var, pattern_var
     DVfrac_obs = [dv_obs/ev, dv_obs3/ev3, dv_obs1/ev1 ]
 
-    # use numpy version of Rpred from here on
-    Rpred = Rpred.detach().numpy()
-    var_pred = varDF(Rpred, df=df)
-    vars_mod = [varDF(Rpred, df=df), dv_pred, var_pred-dv_pred]
+    var_pred = varDF(r, df=df)
+    vars_mod = [varDF(r, df=df), dv_pred, var_pred-dv_pred]
     DVfrac_mod = [dv_pred/var_pred, 
-                  dv_pred3/varDF(Rpred[indxs3], df=df[indxs3]), 
-                  dv_pred1/varDF(Rpred[indxs1], df=df[indxs1])]
-
+                  dv_pred3/varDF(r[indxs3], df=df[indxs3]), 
+                  dv_pred1/varDF(r[indxs1], df=df[indxs1])]
 
     ## Model-based performance measures - need cross-validation indices only
     if valset is None:
-        v_inds = data.val_inds
+        v_inds = dataset.val_inds
     elif valset in ['a', 'A']:
-        v_inds = data.val_indsA
+        v_inds = dataset.val_indsA
         #print( '  Using val set A')
     else:
-        v_inds = data.val_indsB
+        v_inds = dataset.val_indsB
         #print( '  Using val set B')
 
-    #indxs3xv = np.intersect1d( data.val_inds, indxs3 )
-    #indxs1xv = np.intersect1d( data.val_inds, indxs1 )
-    if data.rep_inds is None:
-        allreps = np.arange(data.NT)
+    #indxs3xv = np.intersect1d( dataset.val_inds, indxs3 )
+    #indxs1xv = np.intersect1d( dataset.val_inds, indxs1 )
+    if dataset.rep_inds is None:
+        allreps = np.arange(dataset.NT)
     else:
-        rep1inds = np.intersect1d(v_inds, data.rep_inds[cell_n][:,0])
-        rep2inds = np.intersect1d(v_inds, data.rep_inds[cell_n][:,1])
+        rep1inds = np.intersect1d(v_inds, dataset.rep_inds[cell_n][:,0])
+        rep2inds = np.intersect1d(v_inds, dataset.rep_inds[cell_n][:,1])
         allreps = np.concatenate((rep1inds, rep2inds), axis=0)
 
     indxs3xv = np.intersect1d( allreps, indxs3 )
@@ -609,13 +617,13 @@ def binocular_model_performance( data=None, cell_n=0, Rpred=None, model=None, va
     #                  dv_pred1b/np.var(Rpred[indxs1])]
     
     # Predictive powers (model performance): full response, fr3, fr1
-    pps = [predictive_power( Rpred, data, cell_n=cell_n, inds=allreps ),  # predict variance of full response
-           predictive_power( Rpred, data, cell_n=cell_n, inds=indxs3xv ),
-           predictive_power( Rpred, data, cell_n=cell_n, inds=indxs1xv )]
+    pps = [predictive_power( r, dataset, cell_n=cell_n, inds=allreps ),  # predict variance of full response
+           predictive_power( r, dataset, cell_n=cell_n, inds=indxs3xv ),
+           predictive_power( r, dataset, cell_n=cell_n, inds=indxs1xv )]
 
     Dpps = np.zeros(3)
-    #Dpps[0] = 1-varDF(dobs0[data.val_inds]-dmod0[data.val_inds], df=df[data.val_inds]) / \
-    #    varDF(dobs0[data.val_inds], df=df[data.val_inds])
+    #Dpps[0] = 1-varDF(dobs0[dataset.val_inds]-dmod0[dataset.val_inds], df=df[dataset.val_inds]) / \
+    #    varDF(dobs0[dataset.val_inds], df=df[dataset.val_inds])
     #Dpps[1] = 1-varDF(dobs3[indxs3xv]-dmod3[indxs3xv], df=df[indxs3xv]) / \
     #    varDF(dobs3[indxs3xv], df=df[indxs3xv])
     #Dpps[2] = 1-varDF(dobs1[indxs1xv]-dmod1[indxs1xv], df=df[indxs1xv]) / \
@@ -638,10 +646,10 @@ def binocular_model_performance( data=None, cell_n=0, Rpred=None, model=None, va
         print( "  Pred powers: %0.3f  disp %0.3f (FR3 %0.3f, FR1 %0.3f)"%(pps[0], Dpps[0], Dpps[1], Dpps[2]))
 
     # Add general tuning of each
-    Dtun_obs = [disparity_tuning( data, data.robs[:, cell_n], cell_n=cell_n, fr1or3=3 ),
-                     disparity_tuning( data, data.robs[:, cell_n], cell_n=cell_n, fr1or3=1 )]
-    Dtun_pred = [disparity_tuning( data, Rpred, cell_n=cell_n, fr1or3=3),
-                      disparity_tuning( data, Rpred, cell_n=cell_n, fr1or3=1)]
+    Dtun_obs = [disparity_tuning( dataset, dataset.robs[:, cell_n], cell_n=cell_n, fr1or3=3 ),
+                     disparity_tuning( dataset, dataset.robs[:, cell_n], cell_n=cell_n, fr1or3=1 )]
+    Dtun_pred = [disparity_tuning( dataset, r, cell_n=cell_n, fr1or3=3),
+                      disparity_tuning( dataset, r, cell_n=cell_n, fr1or3=1)]
     # Tuning curve consistency
     DtuningR2 = [1-np.mean(np.square(Dtun_obs[0]['Dtun']-Dtun_pred[0]['Dtun']))/np.var(Dtun_obs[0]['Dtun']),
                  1-np.mean(np.square(Dtun_obs[1]['Dtun']-Dtun_pred[1]['Dtun']))/np.var(Dtun_obs[1]['Dtun'])]
