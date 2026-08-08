@@ -116,6 +116,7 @@ def sico_reg_path(ds_trn, ds_val, NE=2, NI=2, Xreg0=None, Greg0=None, thresh=0.9
         LLsRx[ii] = LL
         print( "    %2d  %9.6f"%(ii, LLsRx[ii]) )
     if to_plot:
+        utils.subplot_setup( 1, 1, row_height=3, fig_width=5)
         plt.plot(LLsRx,'b')
         plt.plot(LLsRx,'bo')
         plt.axhline(np.max(LLsRx)*thresh, color='k', linestyle='--')
@@ -132,8 +133,8 @@ def sico_reg_path(ds_trn, ds_val, NE=2, NI=2, Xreg0=None, Greg0=None, thresh=0.9
     #mod0.plot_filters()
     
     # Center and refine model, and then pick best Greg
-    mod1 = refine_binocular(center_model(mod0, center_binoc=False), 
-                            ds_trn, ds_val, LLnull=LLn, to_plot=False )
+    mod1 = refine_binocular(center_model(mod0, center_binoc=False), ds_trn, ds_val, LLnull=LLn, 
+                            device=device, to_plot=False )
     LL = LLn - mod1.eval_models(ds_val[:], null_adjusted=False)[0]
     print("  Refined sico%d-%d LL = %0.6f"%(NE, NI, LL) )
     mod1 = center_model( mod1, center_binoc=True )
@@ -161,6 +162,7 @@ def sico_reg_path(ds_trn, ds_val, NE=2, NI=2, Xreg0=None, Greg0=None, thresh=0.9
             print('')
         LLsRg[ii] = LL
     if to_plot:
+        utils.subplot_setup( 1, 1, row_height=3, fig_width=5)
         plt.plot(LLsRg,'g')
         plt.plot(LLsRg,'go')
         plt.axhline(np.max(LLsRg)*thresh, color='k', linestyle='--')
@@ -202,7 +204,7 @@ def produce_best_model(
         utils.fit_lbfgs( sico_iter, ds_trn[:], verbose=0, max_iter=2000)
         #LL = LLn_val - sico_iter.eval_models(ds_val[:], null_adjusted=False)[0]
         #print( "  iter %2d:%9.6f"%(ii, LL), end='' )
-        sico_iter = refine_binocular( sico_iter, ds_trn, ds_val, LLnull=LLn_val, to_plot=False )
+        sico_iter = refine_binocular( sico_iter, ds_trn, ds_val, LLnull=LLn_val, to_plot=False, device=device )
         #LLs = LLn_val - sico_iter.eval_models(ds_val[:], null_adjusted=False)[0]
         sico_iter = center_model( sico_iter, center_binoc=True ).to(device)
         sico_iter.networks[0].layers[2].reg.vals['glocalx'] = Greg
@@ -230,7 +232,7 @@ def produce_best_model(
 def refine_binocular( mod0, train_data, val_data, to_plot=True, LLnull=None, device=None ):
     if device is None:
         device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-        print("  refine_binocular WARNING: device not entered, using device:", device)
+        print("  RefBinoc WARNING: device not entered, using device:", device)
 
     mod = deepcopy(mod0).to(device)
     # determine where the mask needs to be
