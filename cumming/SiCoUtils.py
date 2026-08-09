@@ -48,7 +48,7 @@ def sico_path(ds_trn, ds_val, LLn_trn=0, LLn_val=0, drift_term=None, XTreg=None,
 
         # plus one excitation
         NE += 1
-        sicoE1 = produce_best_model(ds_trn, ds_val, drift_term, LR, XTreg, Greg, NE=NE, NI=NE, nlags=nlags,
+        sicoE1 = produce_best_model(ds_trn, ds_val, drift_term, LR, XTreg, Greg, NE=NE, NI=NI, nlags=nlags,
                                     n_iter=n_iter, LLn_trn=LLn_trn, LLn_val=LLn_val, device=device)
         LL = LLn_val - sicoE1.eval_models(ds_val[:], null_adjusted=False)[0]
         if LL > LLprev:
@@ -126,6 +126,10 @@ def sico_reg_path(ds_trn, ds_val, NE=2, NI=2, Xreg0=None, Greg0=None, thresh=0.9
     #print('Highest Reg 1-1 (%d):'%a, LLsRx[a])
     #mods[a].plot_filters()
     bestr = np.where(LLsRx > (np.max(LLsRx)*thresh))[0][-1]
+    # really if its better by 1 to go higher... 
+    if bestr > 0:
+        if LLsRx[bestr-1] > (LLsRx[bestr]):
+            bestr = bestr-1
     #print('Chosen Reg 1-1 (%d)'%bestr)
     XTreg = Rvals[bestr]
     print('  Chosen d2xt =', XTreg, '(%d)'%bestr)
