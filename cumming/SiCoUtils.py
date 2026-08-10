@@ -1,3 +1,5 @@
+from asyncio import log
+
 import numpy as np
 import scipy.io as sio
 import NDNT.utils as utils
@@ -10,7 +12,8 @@ from NTdatasets.cumming.BinocUtils import plot_sico_readout
 
 ############## SiCo Fitting Pathways ##############
 def sico_path(ds_trn, ds_val, LLn_trn=0, LLn_val=0, drift_term=None, XTreg=None, Greg=None, 
-              n_iter=16, nlags=None, device=None ):
+              XTcoupled=False, logXTmult=0, n_iter=16, nlags=None, device=None ):
+    """Fit a series of SICO models with increasing numbers of excitatory and inhibitory filters,"""
     assert drift_term is not None, "Need to enter 'drift_term'"
     if nlags is None:
         nlags = 12
@@ -23,14 +26,16 @@ def sico_path(ds_trn, ds_val, LLn_trn=0, LLn_val=0, drift_term=None, XTreg=None,
     NE, NI = 1, 1
     # d2xt Reg path for beginner model all the way through
     if (XTreg is None) or (Greg is None):
-        XTreg, Greg = sico_reg_path(ds_trn, ds_val, NE=1, NI=1, thresh=0.95, Xreg0=XTreg, Greg0=Greg,
-                                    nlags=nlags, LLn=LLn_val, drift_term=drift_term, device=device,
-                                    return_model=False, to_plot=True )
+        regs = sico_reg_path(ds_trn, ds_val, NE=1, NI=1, thresh=0.95, XTreg0=XTreg, Greg0=Greg, 
+                             XTcoupled=XTcoupled, logXTmult=logXTmult, nlags=nlags, 
+                             LLn=LLn_val, drift_term=drift_term, device=device, to_plot=False )
+        XTreg = regs['XTreg']
+        Greg = regs['Greg']
+        logXTmult = regs['logXTmult']
 
     # Find best model for 1-1 over n_iters
-    mod_path = [produce_best_model(ds_trn, ds_val, drift_term, LR, XTreg, Greg, NE=1, NI=1, 
-                                   n_iter=n_iter, nlags=nlags, LLn_trn=LLn_trn, LLn_val=LLn_val,
-                                   device=device)]
+    mod_path = [produce_best_model(ds_trn, ds_val, drift_term, LR, XTreg, logXTmult, Greg, NE=1, NI=1, 
+                                   n_iter=n_iter, nlags=nlags, LLn_trn=LLn_trn, LLn_val=LLn_val, device=device)]
     
     LLprev = LLn_val - mod_path[0].eval_models(ds_val[:], null_adjusted=False)[0]
     print("1-1: LL = %0.5f"%LLprev)
@@ -41,15 +46,23 @@ def sico_path(ds_trn, ds_val, LLn_trn=0, LLn_val=0, drift_term=None, XTreg=None,
     
     while no_stop and (iter < 6):
         no_stop = False
-        if iter > 0:  # check best regularization on previous model (from last iteration)
-            XTreg, Greg = sico_reg_path(ds_trn, ds_val, NE=NE, NI=NI, thresh=0.95, Xreg0=XTreg, Greg0=Greg,
-                                        nlags=nlags, LLn=LLn_val, drift_term=drift_term, device=device,
-                                        return_model=False, to_plot=False )
+
+        # Check best regularization on previous model (from last iteration)
+        if iter > 0:  
+            regs = sico_reg_path(
+                ds_trn, ds_val, NE=NE, NI=NI, 
+                thresh=0.95, XTreg0=XTreg, XTcoupled=XTcoupled, logXTmult=logXTmult, Greg0=Greg,
+                nlags=nlags, LLn=LLn_val, drift_term=drift_term, device=device, to_plot=False )
+            XTreg = regs['XTreg']
+            Greg = regs['Greg']
+            logXTmult = regs['logXTmult']
+            prev_mod = regs['model']
+            LLprev = LLn_val - prev_mod.eval_models(ds_val[:], null_adjusted=False)[0]
 
         # plus one excitation
         NE += 1
-        sicoE1 = produce_best_model(ds_trn, ds_val, drift_term, LR, XTreg, Greg, NE=NE, NI=NI, nlags=nlags,
-                                    n_iter=n_iter, LLn_trn=LLn_trn, LLn_val=LLn_val, device=device)
+        sicoE1 = produce_best_model(ds_trn, ds_val, drift_term, LR, XTreg, logXTmult, Greg, NE=NE, NI=NI, 
+                                    nlags=nlags, n_iter=n_iter, LLn_trn=LLn_trn, LLn_val=LLn_val, device=device)
         LL = LLn_val - sicoE1.eval_models(ds_val[:], null_adjusted=False)[0]
         if LL > LLprev:
             no_stop = True
@@ -62,7 +75,7 @@ def sico_path(ds_trn, ds_val, LLn_trn=0, LLn_val=0, drift_term=None, XTreg=None,
 
         # plus one inhibition
         NI += 1
-        sicoI1 = produce_best_model(ds_trn, ds_val, drift_term, LR, XTreg, Greg, NE=NE, NI=NI, 
+        sicoI1 = produce_best_model(ds_trn, ds_val, drift_term, LR, XTreg, logXTmult, Greg, NE=NE, NI=NI, 
                                     nlags=nlags, n_iter=n_iter, LLn_trn=LLn_trn, LLn_val=LLn_val, device=device)
         LL = LLn_val - sicoI1.eval_models(ds_val[:], null_adjusted=False)[0]
         if LL > LLprev:
@@ -80,8 +93,8 @@ def sico_path(ds_trn, ds_val, LLn_trn=0, LLn_val=0, drift_term=None, XTreg=None,
 # END sico_path()
 
 
-def sico_reg_path(ds_trn, ds_val, NE=2, NI=2, Xreg0=None, Greg0=None, thresh=0.95, nlags=None,
-                  LLn=0, drift_term=None, return_model=True, to_plot=True, device=None ):
+def sico_reg_path(ds_trn, ds_val, NE=2, NI=2, XTreg0=None, logXTmult=0, XTcoupled=True, Greg0=None, thresh=0.95,
+                  nlags=None, LLn=0, drift_term=None, to_plot=True, device=None ):
     """reg0 is if want centered -- test order of mag in each direction"""
     assert drift_term is not None, "Need to enter 'drift_term'"
 
@@ -96,35 +109,33 @@ def sico_reg_path(ds_trn, ds_val, NE=2, NI=2, Xreg0=None, Greg0=None, thresh=0.9
 
     # Determine LR
     LR = ocular_dominance( ds_trn, verbose=False )
-    if Xreg0 is None:
+
+    # Regularize full sweep or just around a given value
+    if XTreg0 is None:
         Rvals = [1e-6, 1e-4, 0.001, 0.01, 0.1, 1, 10]
     else:
-        Rvals = [Xreg0*0.1, Xreg0, Xreg0*10.0]
+        Rvals = [XTreg0*0.1, XTreg0, XTreg0*10.0]
 
-    # d2xt Reg path for beginer model all the way through
+    # d2xt Reg path (Xreg and Treg coupled at certain ratio)
     LLsRx = np.zeros(len(Rvals))
     mods = []
-    print('  XT-regpath:', Rvals)
+    print('  Initial XT-regpath:', utils.string_convert(Rvals) )
     for ii in range(len(Rvals)): # same seed
-        sico_iter = baseline_sico(NE, NI, LorR=LR, seed=101, XTreg=Rvals[ii], nlags=nlags,
+        sico_iter = baseline_sico(NE, NI, LorR=LR, seed=101, XTreg=Rvals[ii], logXTmult=logXTmult, nlags=nlags,
                                   drift_term=drift_term).to(device) 
         utils.fit_lbfgs( sico_iter, ds_trn[:], verbose=0, max_iter=2000)
         LL = LLn - sico_iter.eval_models(ds_val[:], null_adjusted=False)[0]
-        #if LL > np.max(LLsRx):
-        #    mod0 = deepcopy(sico_iter).to(device0)
         mods.append(deepcopy(sico_iter).to(device0))
         LLsRx[ii] = LL
         print( "    %2d  %9.6f"%(ii, LLsRx[ii]) )
+
     if to_plot:
         utils.subplot_setup( 1, 1, row_height=3, fig_width=5)
         plt.plot(LLsRx,'b')
         plt.plot(LLsRx,'bo')
         plt.axhline(np.max(LLsRx)*thresh, color='k', linestyle='--')
         plt.show()
-    # Best reg
-    #a = np.argmax(LLsRx)
-    #print('Highest Reg 1-1 (%d):'%a, LLsRx[a])
-    #mods[a].plot_filters()
+
     bestr = np.where(LLsRx > (np.max(LLsRx)*thresh))[0][-1]
     # really if its better by 1 to go higher... 
     if bestr > 0:
@@ -132,12 +143,32 @@ def sico_reg_path(ds_trn, ds_val, NE=2, NI=2, Xreg0=None, Greg0=None, thresh=0.9
             bestr = bestr-1
     #print('Chosen Reg 1-1 (%d)'%bestr)
     XTreg = Rvals[bestr]
+    LLprev = LLsRx[bestr]
+    mod0 = deepcopy(mods[bestr]).to(device0)
     print('  Chosen d2xt =', XTreg, '(%d)'%bestr)
-    mod0 = deepcopy(mods[bestr])
-    #mod0.plot_filters()
-    
+    mod0.save_model('temp.ndn')
+    if not XTcoupled: 
+        log_mult_list = np.array([logXTmult-2, logXTmult-1, logXTmult+1], dtype=int)
+        log_mult_list = log_mult_list[log_mult_list >= -2]
+        log_mult_list = log_mult_list[log_mult_list <= 2]
+        print('  T-regpath:', utils.string_convert(log_mult_list) )
+
+        mod1 = deepcopy(mod0)
+        #for log_mult in range(logXTmult-2, logXTmult-1, logXTmult+1, logXTmult+2): 
+        for log_mult in log_mult_list: 
+            sico_iter = baseline_sico(NE, NI, LorR=LR, seed=101, XTreg=XTreg, logXTmult=log_mult, nlags=nlags, 
+                                      drift_term=drift_term).to(device) 
+            utils.fit_lbfgs( sico_iter, ds_trn[:], verbose=0, max_iter=2000)
+            LL = LLn - sico_iter.eval_models(ds_val[:], null_adjusted=False)[0]
+            print( "  d2t-mult 10^%2d: %9.6f"%(log_mult, LL) )
+            if LL > LLprev:
+                LLprev = LL
+                logXTmult = log_mult
+                mod1 = deepcopy(sico_iter).to(device0)
+        print('  Chosen d2x, d2t =', XTreg, XTreg*(10.0**logXTmult))
+
     # Center and refine model, and then pick best Greg
-    mod1 = refine_binocular(center_model(mod0, center_binoc=False), ds_trn, ds_val, LLnull=LLn, 
+    mod1 = refine_binocular(center_model(mod1, center_binoc=False), ds_trn, ds_val, LLnull=LLn, 
                             device=device, to_plot=False )
     LL = LLn - mod1.eval_models(ds_val[:], null_adjusted=False)[0]
     print("  Refined sico%d-%d LL = %0.6f"%(NE, NI, LL) )
@@ -149,7 +180,7 @@ def sico_reg_path(ds_trn, ds_val, NE=2, NI=2, Xreg0=None, Greg0=None, thresh=0.9
     else:
         Rvals = [Greg0*0.1, Greg0, Greg0*10.0]
 
-    print('  glocalx-regpath:', Rvals)
+    print('  glocalx-regpath:', utils.string_convert(Rvals))
     LLsRg = np.zeros(len(Rvals))
     mods = []
     for ii in range(len(Rvals)):
@@ -180,17 +211,30 @@ def sico_reg_path(ds_trn, ds_val, NE=2, NI=2, Xreg0=None, Greg0=None, thresh=0.9
     mod2.plot_filters()
     plot_conv_layer(mod2)
     plot_sico_readout(mod2)
-    if return_model:
-        return XTreg, Greg, mod2
-    return XTreg, Greg
+    # Temporary saves in case craps out
+    mod2.save_model("tmpE%dI%dmodel.ndn"%(NE, NI))
+
+    return {'XTreg': XTreg, 'logXTmult': logXTmult, 'Greg': Greg, 'model': mod2}
+    #if return_model:
+    #    if XTcoupled:
+    #        return XTreg, Greg, mod2
+    #    else:
+    #        return XTreg, Greg, logXTmult, mod2
+    #if XTcoupled:
+    #    return XTreg, Greg
+    #else:
+    #    return XTreg, Greg, logXTmult
 # END sico_reg_path
 
 
 # Produce best model (based on training data) from XX iterations
 def produce_best_model( 
-    ds_trn, ds_val, drift, LorR, XTreg, Greg, NE, NI, n_iter=16, LLn_trn=0, LLn_val=0, nlags=None,
+    ds_trn, ds_val, drift, LorR, XTreg, logXTmult, Greg, NE=2, NI=2, n_iter=16, LLn_trn=0, LLn_val=0, nlags=None,
     device=None, save_models=False, to_plot=True ):
-
+    """
+    This implements a simple model selection procedure where we fit n_iter models 
+    with the same parameters and pick the best one based on validation data
+    """
     if nlags is None:
         nlags = 12
         print("  Using default nlags = %d"%nlags)
@@ -203,13 +247,16 @@ def produce_best_model(
     LLs = np.zeros([n_iter, 2])
     for ii in range(n_iter):
         t0=time()
+
+        # Initial model: unconstrained mask on one side (less dominant eye)
         sico_iter = baseline_sico(NE,NI, LorR=LorR, seed=101+ii, bi_bias=True, nlags=nlags,
-                                  XTreg=XTreg, Greg=Greg/10, drift_term=drift ).to(device)  
+                                  XTreg=XTreg, logXTmult=logXTmult, Greg=Greg/10, drift_term=drift ).to(device)  
         utils.fit_lbfgs( sico_iter, ds_trn[:], verbose=0, max_iter=2000)
-        #LL = LLn_val - sico_iter.eval_models(ds_val[:], null_adjusted=False)[0]
-        #print( "  iter %2d:%9.6f"%(ii, LL), end='' )
+
+        # Brings in mask so selecting best disparity for each filter
         sico_iter = refine_binocular( sico_iter, ds_trn, ds_val, LLnull=LLn_val, to_plot=False, device=device )
-        #LLs = LLn_val - sico_iter.eval_models(ds_val[:], null_adjusted=False)[0]
+
+        # Centers and refits
         sico_iter = center_model( sico_iter, center_binoc=True ).to(device)
         sico_iter.networks[0].layers[2].reg.vals['glocalx'] = Greg
         utils.fit_lbfgs( sico_iter, ds_trn[:], verbose=0, max_iter=2000)
@@ -275,9 +322,12 @@ def refine_binocular( mod0, train_data, val_data, to_plot=True, LLnull=None, dev
 
 
 ############## SICO CREATION / MANIPULATION FUNCTIONS ##############
-def baseline_sico(NE, NI, LorR=0, seed=100, XTreg=0.01, Greg=0.001, Dreg=1.0, nlags=None,
+def baseline_sico(NE, NI, LorR=0, seed=100, XTreg=0.01, logXTmult=0, Greg=0.001, Dreg=1.0, nlags=None,
                   drift_term=None, bi_bias=True ):
-    """Make standard binocular model with given size and defaults -- with drift term"""
+    """
+    Make standard binocular model with given size and defaults -- with drift term
+    logXTmult=0 means that d2x and d2t are the same, so use d2xt, otherwise separately define them based on factor of 10
+    """
 
     from NDNT.NDN import NDN
     from NDNT.networks import FFnetwork
@@ -288,15 +338,22 @@ def baseline_sico(NE, NI, LorR=0, seed=100, XTreg=0.01, Greg=0.001, Dreg=1.0, nl
         print("  Using default nlags = %d"%nlags)
 
     num_mfilts = NE+NI
-    # other constants
     mfw = 21
     bfw = 11
     CregM = 0.0001
 
+    # define reg values for first layer
+    reg_vals = {'center':CregM}
+    if logXTmult == 0:
+        reg_vals['d2xt'] = XTreg
+    else:
+        reg_vals['d2x'] = XTreg
+        reg_vals['d2t'] = XTreg*(10.0**logXTmult)
+        
     monoc_basis_par = ConvLayer.layer_dict( 
         input_dims=[1,72,1,nlags], num_filters=num_mfilts, filter_dims=[1, mfw, 1, nlags],
         norm_type=1,bias=False, initialize_center=True, NLtype='lin',
-        reg_vals={'center':CregM, 'd2xt':XTreg})
+        reg_vals=reg_vals)
 
     bfilt_par = MaskConvLayer.layer_dict( 
         input_dims=[num_mfilts*2,36,1,1], # reinterprets convolutional output above
@@ -332,6 +389,7 @@ def baseline_sico(NE, NI, LorR=0, seed=100, XTreg=0.01, Greg=0.001, Dreg=1.0, nl
         
         # Define model
         sico = NDN(ffnet_list=[stim_net, drift_net, comb_net], seed=seed)
+        # Fix drift term and do not fit
         sico.networks[1].layers[0].weight.data[:,0] = torch.tensor(drift_term.squeeze(), dtype=torch.float32)
         sico.set_parameters(val=False, ffnet_target=1)
         sico.set_parameters(val=False, name='weight', ffnet_target=2)
@@ -340,6 +398,7 @@ def baseline_sico(NE, NI, LorR=0, seed=100, XTreg=0.01, Greg=0.001, Dreg=1.0, nl
    
     sico.networks[0].layers[1].set_mask(masks[LorR])
     return sico
+# END baseline_sico()
 
 
 def center_filter( k0, dfloor=0.2 ):
