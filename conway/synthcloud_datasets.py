@@ -85,6 +85,7 @@ class SimCloudData(SensoryBase):
         self.cell_type_list = cell_type_list # list of cells in order
         self.cell_key = cell_key # cell key as list
         self.res_frac = res_frac
+        self.upsample = res_frac
 
         # Load data from HDF5 file
         with h5py.File(datadir+filename, 'r') as f:
