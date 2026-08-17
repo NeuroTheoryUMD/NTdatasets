@@ -236,12 +236,12 @@ def sico_reg_path(ds_trn, ds_val, NE=2, NI=2, XTreg0=None, logXTmult=0, XTcouple
         mod1 = mod1.to(device)
         utils.fit_lbfgs( mod1, ds_trn[:], verbose=0, max_iter=2000, line_search=ln_search)
     else:
-        mod1 = refine_binocular(center_model(mod1, center_binoc=False), ds_trn, ds_val, LLnull=LLn, 
+        mod1 = refine_binocular(center_model(mod1, include_binoc=False), ds_trn, ds_val, LLnull=LLn, 
                                 device=device, to_plot=False )
     LL = LLn - mod1.eval_models(ds_val[:], null_adjusted=False)[0]
     #print("  Refined sico%d-%d LL = %0.6f"%(NE, NI, LL) )
-    if not sample_layer:
-        mod1 = center_model( mod1, center_binoc=True )
+    #if not sample_layer:
+    mod1 = center_model( mod1, include_binoc=True )
 
     # now glocalx
     if Greg0 is None:
@@ -321,7 +321,7 @@ def produce_best_model(
         sico_iter = refine_binocular( sico_iter, ds_trn, ds_val, LLnull=LLn_val, to_plot=False, device=device )
 
         # Centers and refits
-        sico_iter = center_model( sico_iter, center_binoc=True ).to(device)
+        sico_iter = center_model( sico_iter, include_binoc=True ).to(device)
         sico_iter.networks[0].layers[2].reg.vals['glocalx'] = Greg
         utils.fit_lbfgs( sico_iter, ds_trn[:], verbose=0, max_iter=2000)
         LLs[ii,0] = LLn_val - sico_iter.eval_models(ds_val[:], null_adjusted=False)[0]
@@ -372,7 +372,7 @@ def produce_best_sampler_model(
         utils.fit_lbfgs( sico_iter, ds_trn[:], verbose=0, max_iter=2000, line_search=None)  # this seems fragile w Strong-Wolfe
         # Centers and refits
         sico_iter.networks[0].layers[2].reg.vals['glocalx'] = Greg
-        #sico_iter.networks[0].layers[1].center_filters(verbose=False)
+        sico_iter = center_model(sico_iter, include_binoc=True, verbose=True)
         sico_iter.networks[0].layers[1].fit_shifts(False)
         utils.fit_lbfgs( sico_iter, ds_trn[:], verbose=0, max_iter=2000, line_search=None)
         LLs[ii,0] = LLn_val - sico_iter.eval_models(ds_val[:], null_adjusted=False)[0]
@@ -571,19 +571,28 @@ def center_binoc_mask( mod, filters=None ):
     return new_mod
 
 
-def center_model( mod0, center_binoc=False ):
-    
+def center_model( mod0, include_binoc=False, verbose=True ):
+    """
+    Centers filters and potentially binocular filters of model
+    """
+    from NDNT.modules.layers import MaskConvLayer, BinocShiftLayer
+
     ks0 = mod0.get_weights()
     NF = ks0.shape[-1]
     ks1 = deepcopy(ks0)
     for ii in range(NF):
         ks1[..., ii] = center_filter(ks0[...,ii])
-    if center_binoc:
-        return center_binoc_mask( mod0, filters=ks1 )
-    else:
-        mod1 = deepcopy(mod0)
-        mod1.networks[0].layers[0].weight.data = torch.tensor( 
-            ks1.reshape([-1, NF]), dtype=torch.float32, device=mod0.device)
+    mod1 = deepcopy(mod0)
+    mod1.networks[0].layers[0].weight.data = torch.tensor( 
+        ks1.reshape([-1, NF]), dtype=torch.float32, device=mod0.device)
+
+    if include_binoc:
+        if isinstance(mod1.networks[0].layers[1], MaskConvLayer):
+            return center_binoc_mask( mod1, filters=ks1 )
+        elif isinstance(mod1.networks[0].layers[1], BinocShiftLayer):
+            mod1.networks[0].layers[1].center_filters(round_shifts=True, verbose=verbose)
+        else:
+            print("WARNING: Binocular layer unidentified: not centering.")
     return mod1
 
 

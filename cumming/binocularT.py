@@ -12,13 +12,14 @@ from NTdatasets.sensory_base import SensoryBase
 
 class binocular_singleT(SensoryBase):
 
-    def __init__(self, expt_num=None, time_embed=0, num_lags=12, skip_lags=0, verbose=True, **kwargs):
+    def __init__(self, expt_num=None, time_embed=0, num_lags=12, skip_lags=0, drift_interval=None, verbose=True, **kwargs):
         """
         Args: 
             expt_num: the experiment index
             time_embed: whether to time-embed the stimulus or not
             num_lags: the number of lags to use in time-embedding
             skip_lags: shift stim to throw out early lags
+            drift_interval: the interval that the drift anchors are spaced
             filename: currently the pre-processed matlab file from Dan's old-style format
             **kwargs: non-dataset specific arguments that get passed into SensoryBase
 
@@ -36,12 +37,14 @@ class binocular_singleT(SensoryBase):
         super().__init__(
             filename, 
             num_lags=num_lags, time_embed=time_embed,
+            drift_interval=drift_interval,
             **kwargs)
 
         self.dt = 0.01 #100Hz
         self.upsample = 1
         self.robs_upsample = None
         self.dfs_upsample = None
+        self.frame_switch_mat = None
 
         if verbose:
             print( "Loading", self.datadir + filename)
@@ -142,6 +145,16 @@ class binocular_singleT(SensoryBase):
             for cc in range(self.numSUs):
                 rep_inds.append( np.add(Bmatdat['rep_inds'][cc], -1) ) 
         self.rep_inds = rep_inds
+
+        if drift_interval is not None:
+            #dFT = np.where(np.diff(self.frs) != 0)[0] + 1
+            # len(dFT), dFT[:10]  # every 3 seconds (likely trial time)
+            anchors = np.arange(0, self.NT, drift_interval)
+            drift_tents = self.design_matrix_drift(
+                self.NT, anchors, zero_left=False, zero_right=True, const_right=False)
+            self.Xdrift = torch.tensor(drift_tents, dtype=torch.float32)
+        else:
+            self.Xdrift = None
 
         if verbose:
             print( "Expt %d: %d SUs, %d total units, %d out of %d time points used."%(expt_num, self.numSUs, self.NC, len(used_inds), self.NT))
@@ -325,7 +338,7 @@ class binocular_singleT(SensoryBase):
         disp_switches[np.where(self.frs == 1)[0]] = 0.0
 
         # Need to time-embed this with number of lags in betwen fr3 (3*upsample-1)
-        switch_mat = utils.create_time_embedding( disp_switches, 3*self.upsample-1)  # leaves last lag out
+        switch_mat = self.time_embedding( disp_switches, 3*self.upsample-1).numpy()  # leaves last lag out
 
         # Add regressors for frame switches
         if self.upsample > 1:
@@ -336,7 +349,6 @@ class binocular_singleT(SensoryBase):
                     (switch_mat, utils.create_time_embedding( frame_switches, self.upsample-1)), axis=1) 
             else:
                 switch_mat = np.concatenate((switch_mat, frame_switches), axis=1) 
-        print(switch_mat.shape)
         # Need blank regressor? (it will show up in disparity)
         #blanks = dmat[:, -1][:, None]
         #tmat = np.concatenate( (blanks, switches), axis=1 )
