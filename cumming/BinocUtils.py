@@ -496,7 +496,8 @@ def disparity_predictions_drift(
     return dpred, tpred
 
 
-def binocular_model_performance( dataset=None, cell_n=0, Rpred=None, model=None, valset=None, verbose=True ):
+def binocular_model_performance(dataset=None, cell_n=0, Rpred=None, model=None, valset=None, verbose=True,
+                                downsample_strategy=0, full_output=False):
     """
     Current best-practices for generating prediction quality of neuron and binocular tuning. Currently we
     are not worried about using cross-validation indices only (as they are based on much less data and tend to
@@ -504,12 +505,13 @@ def binocular_model_performance( dataset=None, cell_n=0, Rpred=None, model=None,
     valset can be None (use all val_inds, 'a' or 'b': use subset)
     
     Args:
-        data: binocular dataset (NTdatasets.binocular.single)
+        dataset: binocular dataset (NTdatasets.binocular.single)
         cell_n: cell number (in python numbering, i.e. starting with 0)
         Rpred: predicted response of the model, or can pass in model if set to None
         model: model to use to generate predictions if Rpred is None
         valset: which validation set to use (None, 'a', 'b')
         verbose: whether to print out results
+        downsample_strategy: how to downsample model predictions (None=mean, otherwise by lag: numbered value)
 
     Returns:
         BMP: dictionary with all the information about the binocular model performance
@@ -533,10 +535,14 @@ def binocular_model_performance( dataset=None, cell_n=0, Rpred=None, model=None,
             raise ValueError("Model prediction is longer than data, but no upsample factor found in data")
         assert len(Rpred)/dataset.upsample == NT, "Model prediction is longer than data, but upsample factor does not match"
         # Downsample model prediction if necessary
-        print('Downsampling data to frame resolution (upsample=%d)'%dataset.upsample)
-        r = Rpred[::dataset.upsample]
-        for ii in range(1, dataset.upsample):
-            r += Rpred[ii::dataset.upsample]
+        if downsample_strategy is None:
+            print('  Downsampling data to frame resolution (upsample=%d)'%dataset.upsample)
+            r = Rpred[::dataset.upsample]
+            for ii in range(1, dataset.upsample):
+                r += Rpred[ii::dataset.upsample]
+        else:
+            assert downsample_strategy < dataset.upsample, "Downsample strategy must be less than upsample"
+            r = Rpred[downsample_strategy::dataset.upsample]
     else:
         r = Rpred
 
@@ -561,7 +567,7 @@ def binocular_model_performance( dataset=None, cell_n=0, Rpred=None, model=None,
     else:
         ev_valid = True
 
-    if verbose:
+    if verbose and full_output:
         print( "  Overall explainable variance fraction: %0.3f"%(ev/tv) )
 
     #### Model and data properties (not performance yet)
@@ -578,7 +584,7 @@ def binocular_model_performance( dataset=None, cell_n=0, Rpred=None, model=None,
     dv_pred3 = varDF(dmod3[indxs3]-tmod3[indxs3], df=df[indxs3])
     dv_pred1 = varDF(dmod1[indxs1]-tmod1[indxs1], df=df[indxs1])
     
-    if verbose:
+    if verbose and full_output:
         print( "  Obs disparity variance fraction (DVF): %0.3f (FR3: %0.3f)"%(dv_obs/ev, dv_obs3/ev3) )
     vars_obs = [tv, ev, dv_obs, ev-dv_obs ]  # total, explainable, disp_var, pattern_var
     vars_obs_FR3 = [tv3, ev3, dv_obs3, ev3-dv_obs3 ]  # total, explainable, disp_var, pattern_var
@@ -653,7 +659,7 @@ def binocular_model_performance( dataset=None, cell_n=0, Rpred=None, model=None,
     # Tuning curve consistency
     DtuningR2 = [1-np.mean(np.square(Dtun_obs[0]['Dtun']-Dtun_pred[0]['Dtun']))/np.var(Dtun_obs[0]['Dtun']),
                  1-np.mean(np.square(Dtun_obs[1]['Dtun']-Dtun_pred[1]['Dtun']))/np.var(Dtun_obs[1]['Dtun'])]
-    if verbose:
+    if verbose and full_output:
         print( "  Tuning consistency R2s: FR3 %0.3f  FR1 %0.3f"%(DtuningR2[0], DtuningR2[1]))
 
     BMP = {'EVfrac': ev/tv, 'EVvalid': ev_valid, 
@@ -663,6 +669,7 @@ def binocular_model_performance( dataset=None, cell_n=0, Rpred=None, model=None,
            'Dtun_obs': Dtun_obs, 'Dtun_pred': Dtun_pred, 'DtuningR2': DtuningR2}
     
     return BMP
+# END binocular_model_performance()
 
 
 ## Binocular model utilities

@@ -188,6 +188,9 @@ class binocular_singleT(SensoryBase):
             self.stim = self.time_embedding( stim=stim, nlags=num_lags, verbose=verbose )
             # This will return a torch-tensor
             self.stim_dims[3] = num_lags
+
+        # Also compute frame-switch regressors
+        self.compute_frame_switch_regressors()
     # END binocular_single.prepare_stim()
 
     def separate_eyes(self, val=True):
@@ -221,7 +224,7 @@ class binocular_singleT(SensoryBase):
 
         if len(self.cells_out) == 0:
             out = {
-                'stim': self.stim[idx, :], 
+                'stim': self.stim[idx, :],
                 'robs': robs[idx, :],
                 'dfs': dfs[idx, :]}
             #if self.speckled:
@@ -245,9 +248,9 @@ class binocular_singleT(SensoryBase):
             else:
                 out['Xdrift'] = self.Xdrift[idx, :]
 
+        out['Xframe_switch'] = self.frame_switch_mat[idx, :]
         #if len(self.covariates) > 0:
         #   self.append_covariates( out, idx)
-
         return out
     # END binocular_single.__getitem()
 
@@ -273,8 +276,6 @@ class binocular_singleT(SensoryBase):
 
         if upsample_mult != 1:
             self.prepare_stim(time_embed=self.time_embed, verbose=False)
-        #orig_lags = int(self.num_lags/self.upsample)
-        #self.num_lags = int(self.num_lags*upsample_mult)
 
         if frac == 1:
             # No upsampling needed
@@ -311,5 +312,33 @@ class binocular_singleT(SensoryBase):
 
         if type(self.robs_upsample) != torch.Tensor:
             self.robs_upsample = torch.tensor(self.robs_upsample, dtype=torch.float32, device=device)
-        
-    
+    # END binocular_single.set_upsample()
+
+    def compute_frame_switch_regressors(self):
+        """
+        """
+        from NTdatasets.cumming.BinocUtils import disparity_matrix
+
+        # Derive switches of disparity and frame-time itself
+        dmat = np.repeat(disparity_matrix( self.dispt, self.corrt ), self.upsample, axis=0)
+        disp_switches = np.expand_dims(np.concatenate( (np.sum(abs(np.diff(dmat, axis=0)),axis=1), [0]), axis=0), axis=1)/2
+        disp_switches[np.where(self.frs == 1)[0]] = 0.0
+
+        # Need to time-embed this with number of lags in betwen fr3 (3*upsample-1)
+        switch_mat = utils.create_time_embedding( disp_switches, 3*self.upsample-1)  # leaves last lag out
+
+        # Add regressors for frame switches
+        if self.upsample > 1:
+            frame_switches = np.zeros([self.NT*self.upsample, 1], dtype=np.float32)
+            frame_switches[np.arange(0, self.NT*self.upsample, self.upsample), 0] = 1.0
+            if self.upsample > 2:
+                switch_mat = np.concatenate(
+                    (switch_mat, utils.create_time_embedding( frame_switches, self.upsample-1)), axis=1) 
+            else:
+                switch_mat = np.concatenate((switch_mat, frame_switches), axis=1) 
+        print(switch_mat.shape)
+        # Need blank regressor? (it will show up in disparity)
+        #blanks = dmat[:, -1][:, None]
+        #tmat = np.concatenate( (blanks, switches), axis=1 )
+        self.frame_switch_mat = torch.tensor(switch_mat, dtype=torch.float32)
+    # END binocular_single.compute_frame_switch_regressors()
