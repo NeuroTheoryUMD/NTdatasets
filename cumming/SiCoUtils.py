@@ -232,16 +232,14 @@ def sico_reg_path(ds_trn, ds_val, NE=2, NI=2, XTreg0=None, logXTmult=0, XTcouple
 
     # Center and refine model, and then pick best Greg
     if sample_layer:
-        mod1.networks[0].layers[1].center_filters()
-        mod1 = mod1.to(device)
+        mod1 = center_model( mod1, include_binoc=True ).to(device)
         utils.fit_lbfgs( mod1, ds_trn[:], verbose=0, max_iter=2000, line_search=ln_search)
     else:
         mod1 = refine_binocular(center_model(mod1, include_binoc=False), ds_trn, ds_val, LLnull=LLn, 
                                 device=device, to_plot=False )
+        mod1 = center_model( mod1, include_binoc=True ).to(torch.device("cpu"))
     LL = LLn - mod1.eval_models(ds_val[:], null_adjusted=False)[0]
     #print("  Refined sico%d-%d LL = %0.6f"%(NE, NI, LL) )
-    #if not sample_layer:
-    mod1 = center_model( mod1, include_binoc=True )
 
     # now glocalx
     if Greg0 is None:
@@ -276,7 +274,7 @@ def sico_reg_path(ds_trn, ds_val, NE=2, NI=2, XTreg0=None, logXTmult=0, XTcouple
     bestr = np.where(LLsRg > (np.max(LLsRg)*thresh))[0][-1]
     Greg = Rvals[bestr]
     mod2 = mods[bestr]
-    print('  Chosen glocalx = ', Greg, '(%d)'%bestr)
+    print('  Chosen glocalx = ', utils.string_convert(Greg), '(%d)'%bestr)
 
     if to_plot:
         if not sample_layer:
@@ -361,18 +359,19 @@ def produce_best_sampler_model(
     print('NE, NI = %d, %d'%(NE, NI))
     mods = []
     LLs = np.zeros([n_iter, 2])
+    running_shifts = 0  # track shifts to save time to not have to center all the time
     for ii in range(n_iter):
         t0=time()
 
         # Initial model: unconstrained mask on one side (less dominant eye)
         sico_iter = baseline_sico(NE,NI, LorR=LorR, seed=101+ii, bi_bias=True, nlags=nlags, time_covariates=time_covariates,
-                                  sample_layer=True,
+                                  sample_layer=True, shift_start=running_shifts,
                                   XTreg=XTreg, logXTmult=logXTmult, Greg=Greg/10, drift_term=drift ).to(device)
         #sico_iter.list_parameters()
         utils.fit_lbfgs( sico_iter, ds_trn[:], verbose=0, max_iter=2000, line_search=None)  # this seems fragile w Strong-Wolfe
         # Centers and refits
         sico_iter.networks[0].layers[2].reg.vals['glocalx'] = Greg
-        sico_iter = center_model(sico_iter, include_binoc=True, verbose=True)
+        sico_iter = center_model(sico_iter, include_binoc=True, verbose=False)
         sico_iter.networks[0].layers[1].fit_shifts(False)
         utils.fit_lbfgs( sico_iter, ds_trn[:], verbose=0, max_iter=2000, line_search=None)
         LLs[ii,0] = LLn_val - sico_iter.eval_models(ds_val[:], null_adjusted=False)[0]
@@ -380,7 +379,8 @@ def produce_best_sampler_model(
         t1 = time()
         print("  %2d  %8.5f  %8.5f (%0.2f min)"%(ii, LLs[ii,1], LLs[ii,0],(t1-t0)/60 ))
         mods.append(deepcopy(sico_iter).to(torch.device("cpu")))
-            
+        running_shifts = deepcopy(sico_iter.networks[0].layers[1].x_fixed.data.cpu().numpy())
+
     a = np.nanargmax(LLs[:,1])
     print( "  %d-%d best model (%d) LLs (val/trn): "%(NE, NI, a), LLs[a,:])
     best_mod = deepcopy(mods[a].to(torch.device("cpu")))
