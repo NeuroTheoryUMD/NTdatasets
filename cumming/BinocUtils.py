@@ -495,7 +495,7 @@ def disparity_predictions_drift(
 
 
 def binocular_model_performance(dataset=None, cell_n=0, Rpred=None, model=None, valset=None, verbose=True,
-                                downsample_strategy=0, full_output=False):
+                                downsample_strategy=None, full_output=False):
     """
     Current best-practices for generating prediction quality of neuron and binocular tuning. Currently we
     are not worried about using cross-validation indices only (as they are based on much less data and tend to
@@ -525,8 +525,8 @@ def binocular_model_performance(dataset=None, cell_n=0, Rpred=None, model=None, 
         cells_out_save = deepcopy(dataset.cells_out)
         dataset.set_cells(cell_n)
         Rpred = model(dataset[:]).detach().cpu().numpy()
-    elif isinstance(Rpred, torch.Tensor):
-        Rpred = Rpred.cpu().detach().numpy()
+    #elif isinstance(Rpred, torch.Tensor):  # torch not defined so just make sure not torch
+    #    Rpred = Rpred.cpu().detach().numpy()
     if len(Rpred.shape) == 1:
         Rpred = Rpred[:, None]
 
@@ -543,11 +543,14 @@ def binocular_model_performance(dataset=None, cell_n=0, Rpred=None, model=None, 
             for ii in range(1, dataset.upsample):
                 r += deepcopy(Rpred[ii::dataset.upsample])
         else:
+            # Only use particular lag, but has to be multipled (since firing rate will be compared to all spikes)
             assert downsample_strategy < dataset.upsample, "Downsample strategy must be less than upsample"
-            r = deepcopy(Rpred[downsample_strategy::dataset.upsample])
+            r = deepcopy(Rpred[downsample_strategy::dataset.upsample])*dataset.upsample
     else:
         r = deepcopy(Rpred)
-
+    utils.ss()
+    plt.plot(r[:150])
+    plt.show()
     ## GENERAL COMPUTATIONS on data (cell-specific but not yet model-specific, using as much data as can)
     # make disparity predictions for all conditions
     dobs0, tobs0 = disparity_predictions( dataset, cell_n=cell_n, spiking=True, rectified=True )
