@@ -548,9 +548,7 @@ def binocular_model_performance(dataset=None, cell_n=0, Rpred=None, model=None, 
             r = deepcopy(Rpred[downsample_strategy::dataset.upsample])*dataset.upsample
     else:
         r = deepcopy(Rpred)
-    utils.ss()
-    plt.plot(r[:150])
-    plt.show()
+
     ## GENERAL COMPUTATIONS on data (cell-specific but not yet model-specific, using as much data as can)
     # make disparity predictions for all conditions
     dobs0, tobs0 = disparity_predictions( dataset, cell_n=cell_n, spiking=True, rectified=True )

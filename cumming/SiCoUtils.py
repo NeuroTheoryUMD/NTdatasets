@@ -311,7 +311,7 @@ def produce_best_model(
 
         # Initial model: unconstrained mask on one side (less dominant eye)
         sico_iter = baseline_sico(NE,NI, LorR=LorR, seed=101+ii, bi_bias=True, nlags=nlags, time_covariates=time_covariates,
-                                  sampling_layer=False,
+                                  sample_layer=False,
                                   XTreg=XTreg, logXTmult=logXTmult, Greg=Greg/10, drift_term=drift ).to(device)  
         utils.fit_lbfgs( sico_iter, ds_trn[:], verbose=0, max_iter=2000)
 
@@ -372,25 +372,25 @@ def produce_best_sampler_model(
         # Centers and refits
         sico_iter.networks[0].layers[2].reg.vals['glocalx'] = Greg
         sico_iter = center_model(sico_iter, include_binoc=True, verbose=False)
-        #t0 = time()
+        t1 = time()
         # ratchet in sigmas over three steps
         if np.max(sico_iter.networks[0].layers[1].sigmas.data.cpu().numpy()) > 1.0:
-            print("  Highest sigma %0.2f. Decreasing to 1"%np.max(sico_iter.networks[0].layers[1].sigmas.data.cpu().numpy()))
+            print("      Highest sigma %0.2f. Decreasing to 1"%np.max(sico_iter.networks[0].layers[1].sigmas.data.cpu().numpy()))
             sico_iter.networks[0].layers[1].fit_shifts(val=True, fixed_sigmas=True, sigma0 = 1.0)
             utils.fit_lbfgs( sico_iter, ds_trn[:], verbose=0, max_iter=2000, line_search=None)
         if np.max(sico_iter.networks[0].layers[1].sigmas.data.cpu().numpy()) > 0.6:
-            print("  Highest sigma %0.2f. Decreasing to 0.6"%np.max(sico_iter.networks[0].layers[1].sigmas.data.cpu().numpy()))
+            print("      Highest sigma %0.2f. Decreasing to 0.6"%np.max(sico_iter.networks[0].layers[1].sigmas.data.cpu().numpy()))
             sico_iter.networks[0].layers[1].fit_shifts(val=True, fixed_sigmas=True, sigma0 = 0.6)
             utils.fit_lbfgs( sico_iter, ds_trn[:], verbose=0, max_iter=2000, line_search=None)
         
         sico_iter.networks[0].layers[1].fit_shifts(val=False)
         utils.fit_lbfgs( sico_iter, ds_trn[:], verbose=0, max_iter=2000, line_search=None)
-        #t1 = time()
-        #print("  Refinement time: %0.2f min"%( (t1-t0)/60 ))
+        t2 = time()
+        print("  Refinement time: %0.2f min"%( (t2-t1)/60 ))
         LLs[ii,0] = LLn_val - sico_iter.eval_models(ds_val[:], null_adjusted=False)[0]
         LLs[ii,1] = LLn_trn - sico_iter.eval_models(ds_trn[:], null_adjusted=False)[0] 
-        t1 = time()
-        print("  %2d  %8.5f  %8.5f (%0.2f min)"%(ii, LLs[ii,1], LLs[ii,0],(t1-t0)/60 ))
+        t2 = time()
+        print("  %2d  %8.5f  %8.5f (%0.2f min)"%(ii, LLs[ii,1], LLs[ii,0],(t2-t0)/60 ))
         mods.append(deepcopy(sico_iter).to(torch.device("cpu")))
         running_shifts = deepcopy(sico_iter.networks[0].layers[1].x_fixed.data.cpu().numpy())
 
