@@ -41,13 +41,13 @@ def sico_path(ds_trn, ds_val, LLn_trn=0, LLn_val=0, drift_term=None,
     save_name = "sico"
     if expt_n is not None:
         assert cell_n is not None, "If entering expt_n, must also enter cell_n for saving models"
-        if id is not None:
-            save_name += str(expt_n)+'c'+str(cell_n)+id
-        else:
-            save_name += str(expt_n)+'c'+str(cell_n)
+        save_name += str(expt_n)+'c'+str(cell_n)
     elif cell_n is not None:
         save_name += str(cell_n)
-    save_name += "path"
+    if id is not None:
+        save_name += str(id)
+    else:
+        save_name += 'path'
     
     if time_covariates: # replace boolean with number (messy I know but has good default behavior)
         time_covariates = ds_trn[0]['Xframe_switch'].shape[-1]
