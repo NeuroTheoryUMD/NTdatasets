@@ -538,7 +538,8 @@ def binocular_model_performance(dataset=None, cell_n=0, Rpred=None, model=None, 
         assert len(Rpred)/dataset.upsample == NT, "Model prediction is longer than data, but upsample factor does not match"
         # Downsample model prediction if necessary
         if downsample_strategy is None:
-            print('  Downsampling data to frame resolution (upsample=%d)'%dataset.upsample)
+            if verbose and full_output:
+                print('  Downsampling data to frame resolution (upsample=%d)'%dataset.upsample)
             r = deepcopy(Rpred[::dataset.upsample])
             for ii in range(1, dataset.upsample):
                 r += deepcopy(Rpred[ii::dataset.upsample])

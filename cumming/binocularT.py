@@ -58,6 +58,7 @@ class binocular_singleT(SensoryBase):
 
         self.dims = [1, 72, 1, 1]
         self.divide_stim = False
+        #self.LLsNULL = np.zeros(4, dtype=np.float32)  # will store LLs for train, val, valA, valB
 
         # Responses
         self.unit_index = np.array(Bmatdat['unit_raw_index'], dtype=int)
@@ -354,3 +355,40 @@ class binocular_singleT(SensoryBase):
         #tmat = np.concatenate( (blanks, switches), axis=1 )
         self.frame_switch_mat = torch.tensor(switch_mat, dtype=torch.float32)
     # END binocular_single.compute_frame_switch_regressors()
+
+    def compute_nullLLs( self, cc=None, drift_term=None, Dreg=1.0, bias_only=False ):
+        """
+        Compute the log-likelihood of the data under a null model (no stimulus terms, only bias and drift).
+        """
+        from NDNT.modules.layers import NDNLayer
+        from NDNT.networks import FFnetwork
+        from NDNT.NDN import NDN
+        assert cc is not None, "Must set cell number"
+        self.set_cells(cc)
+
+        NA = self.Xdrift.shape[1]
+
+        drift_pars1 = NDNLayer.layer_dict( 
+            input_dims=[1,1,1,NA], num_filters=1, bias=False, norm_type=0, NLtype='softplus')
+        drift_pars1['reg_vals'] = {'d2t': Dreg, 'bcs':{'d2t':0} } 
+        # for stand-alone drift model
+
+        drift_mod = NDN( layer_list = [drift_pars1], loss_type='poisson')
+        drift_mod.networks[0].xstim_n = 'Xdrift'
+        if drift_term is not None:
+            assert drift_term.shape[0] == NA, "drift_term shape does not match Xdrift"
+            drift_mod.networks[0].layers[0].weight.data = torch.tensor(drift_term, dtype=torch.float32)
+            drift_mod.set_parameters(name='weight', val=False)
+
+        if drift_term is None or bias_only:
+            utils.fit_lbfgs( drift_mod, self[self.train_inds], verbose=False)
+
+        LLnull = drift_mod.eval_models(self[self.val_inds], null_adjusted=False)[0]
+        print( "  LLnull (val) = %6.4f"%LLnull)
+        LLnullB = drift_mod.eval_models(self[self.val_indsB], null_adjusted=False)[0]
+        print( "  LLnull (vB)  = %6.4f"%LLnullB) 
+        LLnullTR = drift_mod.eval_models(self[self.train_inds], null_adjusted=False)[0]
+        print( "  LLnull (trn) = %6.4f"%LLnullTR)
+        drift = drift_mod.get_weights()
+        drift = drift-np.mean(drift)  
+        return {'val': LLnull, 'valB': LLnullB, 'train': LLnullTR, 'drift_term': drift, 'drift_mod': drift_mod}

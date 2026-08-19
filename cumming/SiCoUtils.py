@@ -11,9 +11,27 @@ from NTdatasets.cumming.BinocUtils import plot_sico_readout
 ############## SiCo Fitting Pathways ##############
 def sico_path(ds_trn, ds_val, LLn_trn=0, LLn_val=0, drift_term=None,
               XTreg=None, Greg=None, XTcoupled=False, logXTmult=0, sample_layer=True,
-              n_iter=16, time_covariates=True, expt_n=None, cell_n=None, device=None):
+              n_iter=8, time_covariates=True, expt_n=None, cell_n=None, id=None, device=None):
     """
     Fit a series of SICO models with increasing numbers of excitatory and inhibitory filters
+
+    Args:
+        ds_trn: training dataset
+        ds_val: validation dataset
+        LLn_trn: null log-likelihood for training data
+        LLn_val: null log-likelihood for validation data
+        drift_term: numpy array of drift term to use in model (must be entered)
+        XTreg: initial regularization for d2x and d2t (if XTcoupled=True) or d2x (if XTcoupled=False)
+        Greg: initial regularization for glocalx
+        XTcoupled: if True, d2x and d2t are coupled, otherwise they are separate
+        logXTmult: if XTcoupled=False, this is the log10 multiplier for d2t relative to d2x
+        sample_layer: if True, use BinocShiftLayer, otherwise use MaskConvLayer
+        n_iter: number of iterations to fit each model (default=8)
+        time_covariates: if True, include time covariates in the model (default=True)
+        expt_n: experiment number for saving models (optional)
+        cell_n: cell number for saving models (optional)
+        id: additional optional identifier string to add to filename for saving models
+        device: torch device to use for fitting (default=None, will use cuda if available)
     """
     assert drift_term is not None, "Need to enter 'drift_term'"
     nlags = ds_trn[0]['stim'].shape[-1]//72
@@ -23,7 +41,10 @@ def sico_path(ds_trn, ds_val, LLn_trn=0, LLn_val=0, drift_term=None,
     save_name = "sico"
     if expt_n is not None:
         assert cell_n is not None, "If entering expt_n, must also enter cell_n for saving models"
-        save_name += str(expt_n)+'c'+str(cell_n)
+        if id is not None:
+            save_name += str(expt_n)+'c'+str(cell_n)+id
+        else:
+            save_name += str(expt_n)+'c'+str(cell_n)
     elif cell_n is not None:
         save_name += str(cell_n)
     save_name += "path"
@@ -47,11 +68,13 @@ def sico_path(ds_trn, ds_val, LLn_trn=0, LLn_val=0, drift_term=None,
 
     # Find best model for 1-1 over n_iters
     if sample_layer:
-        mod_path = [produce_best_sampler_model(ds_trn, ds_val, drift_term, LR, XTreg, logXTmult, Greg, NE=1, NI=1, time_covariates=time_covariates,
-                                    n_iter=n_iter, nlags=nlags, LLn_trn=LLn_trn, LLn_val=LLn_val, device=device, to_plot=True)]
+        mod_path = [produce_best_sampler_model(
+            ds_trn, ds_val, drift_term, LR, XTreg, logXTmult, Greg, NE=1, NI=1, time_covariates=time_covariates,
+            n_iter=n_iter, nlags=nlags, LLn_trn=LLn_trn, LLn_val=LLn_val, device=device, to_plot=True)]
     else:
-        mod_path = [produce_best_model(ds_trn, ds_val, drift_term, LR, XTreg, logXTmult, Greg, NE=1, NI=1, time_covariates=time_covariates,
-                                    n_iter=n_iter, nlags=nlags, LLn_trn=LLn_trn, LLn_val=LLn_val, device=device, to_plot=True)]
+        mod_path = [produce_best_model(
+            ds_trn, ds_val, drift_term, LR, XTreg, logXTmult, Greg, NE=1, NI=1, time_covariates=time_covariates,
+            n_iter=n_iter, nlags=nlags, LLn_trn=LLn_trn, LLn_val=LLn_val, device=device, to_plot=True)]
     
     LLprev = LLn_val - mod_path[0].eval_models(ds_val[:], null_adjusted=False)[0]
     #print("1-1: LL = %0.5f"%LLprev)
@@ -375,18 +398,18 @@ def produce_best_sampler_model(
         t1 = time()
         # ratchet in sigmas over three steps
         if np.max(sico_iter.networks[0].layers[1].sigmas.data.cpu().numpy()) > 1.0:
-            print("      Highest sigma %0.2f. Decreasing to 1"%np.max(sico_iter.networks[0].layers[1].sigmas.data.cpu().numpy()))
+            print("       Highest sigma %0.2f. Decreasing to 1"%np.max(sico_iter.networks[0].layers[1].sigmas.data.cpu().numpy()))
             sico_iter.networks[0].layers[1].fit_shifts(val=True, fixed_sigmas=True, sigma0 = 1.0)
             utils.fit_lbfgs( sico_iter, ds_trn[:], verbose=0, max_iter=2000, line_search=None)
         if np.max(sico_iter.networks[0].layers[1].sigmas.data.cpu().numpy()) > 0.6:
-            print("      Highest sigma %0.2f. Decreasing to 0.6"%np.max(sico_iter.networks[0].layers[1].sigmas.data.cpu().numpy()))
+            print("       Highest sigma %0.2f. Decreasing to 0.6"%np.max(sico_iter.networks[0].layers[1].sigmas.data.cpu().numpy()))
             sico_iter.networks[0].layers[1].fit_shifts(val=True, fixed_sigmas=True, sigma0 = 0.6)
             utils.fit_lbfgs( sico_iter, ds_trn[:], verbose=0, max_iter=2000, line_search=None)
         
         sico_iter.networks[0].layers[1].fit_shifts(val=False)
         utils.fit_lbfgs( sico_iter, ds_trn[:], verbose=0, max_iter=2000, line_search=None)
         t2 = time()
-        print("  Refinement time: %0.2f min"%( (t2-t1)/60 ))
+        #print("   Refinement time: %0.2f min"%( (t2-t1)/60 ))
         LLs[ii,0] = LLn_val - sico_iter.eval_models(ds_val[:], null_adjusted=False)[0]
         LLs[ii,1] = LLn_trn - sico_iter.eval_models(ds_trn[:], null_adjusted=False)[0] 
         t2 = time()
