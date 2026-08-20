@@ -67,6 +67,7 @@ def sico_path(ds_trn, ds_val, LLn_trn=0, LLn_val=0, drift_term=None,
         logXTmult = regs['logXTmult']
 
     # Find best model for 1-1 over n_iters
+    print('NE, NI = %d, %d'%(NE, NI))
     if sample_layer:
         mod_path = [produce_best_sampler_model(
             ds_trn, ds_val, drift_term, LR, XTreg, logXTmult, Greg, NE=1, NI=1, time_covariates=time_covariates,
@@ -81,7 +82,6 @@ def sico_path(ds_trn, ds_val, LLn_trn=0, LLn_val=0, drift_term=None,
     mod_path[0].save_model(save_name+"1_1.ndn")
     
     no_stop=True
-    NE, NI = 1,1
     iter = 0 # number of adds to E and/or I
 
     while no_stop and (iter < 6):
@@ -102,9 +102,12 @@ def sico_path(ds_trn, ds_val, LLn_trn=0, LLn_val=0, drift_term=None,
 
         # plus one excitation
         NE += 1
+        print('NE, NI = %d, %d'%(NE, NI))
         if sample_layer:
-            sicoE1 = produce_best_sampler_model(ds_trn, ds_val, drift_term, LR, XTreg, logXTmult, Greg, NE=NE, NI=NI, time_covariates=time_covariates,
-                                                n_iter=n_iter, nlags=nlags, LLn_trn=LLn_trn, LLn_val=LLn_val, device=device, to_plot=False)
+            #sicoE1 = produce_best_sampler_model(ds_trn, ds_val, drift_term, LR, XTreg, logXTmult, Greg, NE=NE, NI=NI, time_covariates=time_covariates,
+            #                                    n_iter=n_iter, nlags=nlags, LLn_trn=LLn_trn, LLn_val=LLn_val, device=device, to_plot=False)
+            sicoE1 = produce_best_sampler_model2(ds_trn, ds_val, model=mod_path[-1], LR=LR, addEorI=0, time_covariates=time_covariates,
+                                                 n_iter=n_iter, LLn_trn=LLn_trn, LLn_val=LLn_val, device=device, to_plot=False)
         else:
             sicoE1 = produce_best_model(ds_trn, ds_val, drift_term, LR, XTreg, logXTmult, Greg, NE=NE, NI=NI, 
                                         time_covariates=time_covariates, nlags=nlags, n_iter=n_iter, LLn_trn=LLn_trn, LLn_val=LLn_val, device=device,
@@ -131,13 +134,16 @@ def sico_path(ds_trn, ds_val, LLn_trn=0, LLn_val=0, drift_term=None,
 
         # plus one inhibition
         NI += 1
+        print('NE, NI = %d, %d'%(NE, NI))
         if sample_layer:
-            sicoI1 = produce_best_sampler_model(ds_trn, ds_val, drift_term, LR, XTreg, logXTmult, Greg, NE=NE, NI=NI, time_covariates=time_covariates,
-                                                n_iter=n_iter, nlags=nlags, LLn_trn=LLn_trn, LLn_val=LLn_val, device=device, to_plot=False)
+            #sicoI1 = produce_best_sampler_model(ds_trn, ds_val, drift_term, LR, XTreg, logXTmult, Greg, NE=NE, NI=NI, time_covariates=time_covariates,
+            #                                    n_iter=n_iter, nlags=nlags, LLn_trn=LLn_trn, LLn_val=LLn_val, device=device, to_plot=False)
+            sicoI1 = produce_best_sampler_model2(ds_trn, ds_val, model=mod_path[-1], LR=LR, addEorI=1, time_covariates=time_covariates,
+                                                 n_iter=n_iter, LLn_trn=LLn_trn, LLn_val=LLn_val, device=device, to_plot=False)
         else:
             sicoI1 = produce_best_model(ds_trn, ds_val, drift_term, LR, XTreg, logXTmult, Greg, NE=NE, NI=NI, 
-                                    time_covariates=time_covariates, nlags=nlags, n_iter=n_iter, LLn_trn=LLn_trn, LLn_val=LLn_val, device=device,
-                                    to_plot=False)
+                                        time_covariates=time_covariates, nlags=nlags, n_iter=n_iter, LLn_trn=LLn_trn, LLn_val=LLn_val, device=device,
+                                        to_plot=False)
             
         LL = LLn_val - sicoI1.eval_models(ds_val[:], null_adjusted=False)[0]
         if LL > LLprev:
@@ -297,7 +303,7 @@ def sico_reg_path(ds_trn, ds_val, NE=2, NI=2, XTreg0=None, logXTmult=0, XTcouple
     bestr = np.where(LLsRg > (np.max(LLsRg)*thresh))[0][-1]
     Greg = Rvals[bestr]
     mod2 = mods[bestr]
-    print('  Chosen glocalx = ', utils.string_convert(Greg), '(%d)'%bestr)
+    print('  Chosen glocalx = ', utils.string_convert(Greg), '(%d)'%bestr, '\n')
 
     if to_plot:
         if not sample_layer:
@@ -326,7 +332,7 @@ def produce_best_model(
         device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
         print("  PBM WARNING: device not entered, using device:", device)
 
-    print('NE, NI = %d, %d'%(NE, NI))
+    #print('NE, NI = %d, %d'%(NE, NI))
     mods = []
     LLs = np.zeros([n_iter, 2])
     for ii in range(n_iter):
@@ -364,6 +370,119 @@ def produce_best_model(
         return best_mod
 # END produce_best_model()
 
+def extend_binocular_model( mod0, addEorI=0, LorR=0, seed=101 ):
+    """
+    Extend a binocular model by adding one excitatory or inhibitory unit
+    """
+    from NDNT.modules.layers import BinocShiftLayer
+
+    if isinstance(mod0.networks[0].layers[1], BinocShiftLayer):
+        sample_layer = True
+        LorR = mod0.networks[0].layers[1].LorR
+    else:
+        sample_layer = False
+    NI0 = mod0.networks[0].layers[1].num_inh
+    NE0 = mod0.networks[0].layers[1].num_filters - NI0
+
+    if addEorI == 0: # add one excitation
+        NE = NE0 + 1
+        NI = NI0
+    else: # add one inhibition
+        NE = NE0
+        NI = NI0 + 1
+
+    XTcoupled = True
+    logXTmult = 0
+    if 'd2x' in mod0.networks[0].layers[0].reg.vals:
+        if mod0.networks[0].layers[0].reg.vals['d2x'] > 0:
+            XTcoupled = False
+            logXTmult = np.log10(mod0.networks[0].layers[0].reg.vals['d2t']/mod0.networks[0].layers[0].reg.vals['d2x'])
+
+    mod1 = baseline_sico(NE, NI, LorR=LorR, seed=seed, 
+                         XTreg=mod0.networks[0].layers[0].reg.vals['d2xt'], Greg=mod0.networks[0].layers[2].reg.vals['glocalx'],
+                         logXTmult=logXTmult,
+                         nlags=mod0.networks[0].layers[0].filter_dims[-1],
+                         sample_layer=sample_layer,
+                         drift_term=mod0.networks[1].layers[0].weight.data.cpu().numpy(),
+                         time_covariates=False)
+
+    # Copy model parameters appropriately
+    weight_mapping = np.concatenate( (np.arange(NE0), np.arange(NE, NE+NI0)) )
+    mod1.networks[0].layers[0].weight.data[:, weight_mapping] = mod0.networks[0].layers[0].weight.data.clone()
+
+    mod1.networks[0].layers[1].weight.data[:, weight_mapping] = mod0.networks[0].layers[1].weight.data.clone()
+    mod1.networks[0].layers[1].bias.data[weight_mapping] = mod0.networks[0].layers[1].bias.data.clone()
+    if sample_layer:
+        mod1.networks[0].layers[1].shifts.data[weight_mapping] = mod0.networks[0].layers[1].shifts.data.clone()
+        mod1.networks[0].layers[1].sigmas.data[weight_mapping] = mod0.networks[0].layers[1].sigmas.data.clone()
+    else:
+        mod1.networks[0].layers[1].masks.data[:, weight_mapping] = mod0.networks[0].layers[1].masks.data.clone()
+    # Not currently doing readout layer -- would have to reshape first
+    
+    return mod1
+
+def produce_best_sampler_model2(
+        ds_trn, ds_val, model=None, LR=0, addEorI=0, time_covariates=0,
+        n_iter=8, LLn_trn=0, LLn_val=0, device=None, save_models=False, to_plot=True):
+    """
+    This implements a simple model selection procedure where we fit n_iter models
+    """
+    if device is None:
+        device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+        print("  PBM WARNING: device not entered, using device:", device)
+
+    #print('NE, NI = %d, %d'%(NE, NI))
+    mods = []
+    LLs = np.zeros([n_iter, 2])
+    #running_shifts = None  # track shifts to save time to not have to center all the time
+    for ii in range(n_iter):
+        t0=time()
+
+        # Initial model: unconstrained mask on one side (less dominant eye)
+        sico_iter = extend_binocular_model(model, addEorI=addEorI, seed=101+ii).to(device) 
+        sico_iter.networks[0].layers[2].reg.vals['glocalx'] *= 0.1
+        #if running_shifts is not None:
+        utils.fit_lbfgs( sico_iter, ds_trn[:], verbose=0, max_iter=2000, line_search=None)  # this seems fragile w Strong-Wolfe
+        # Centers and refits
+        sico_iter.networks[0].layers[2].reg.vals['glocalx'] *= 10
+        sico_iter = center_model(sico_iter, include_binoc=True, verbose=False)
+        t1 = time()
+        # ratchet in sigmas over three steps
+        if np.max(sico_iter.networks[0].layers[1].sigmas.data.cpu().numpy()) > 1.0:
+            num_over = np.sum(sico_iter.networks[0].layers[1].sigmas.data.cpu().numpy() > 1.0)
+            print("       Highest sigma %0.2f (%d over 1.0). Decreasing to 1"%(np.max(sico_iter.networks[0].layers[1].sigmas.data.cpu().numpy()), num_over))
+            sico_iter.networks[0].layers[1].fit_shifts(val=True, fixed_sigmas=True, sigma0 = 1.0)
+            utils.fit_lbfgs( sico_iter, ds_trn[:], verbose=0, max_iter=2000, line_search=None)
+        if np.max(sico_iter.networks[0].layers[1].sigmas.data.cpu().numpy()) > 0.6:
+            num_over = np.sum(sico_iter.networks[0].layers[1].sigmas.data.cpu().numpy() > 0.6)
+            print("       Highest sigma %0.2f (%d over 0.6). Decreasing to 0.6"%(np.max(sico_iter.networks[0].layers[1].sigmas.data.cpu().numpy()), num_over))
+            sico_iter.networks[0].layers[1].fit_shifts(val=True, fixed_sigmas=True, sigma0 = 0.6)
+            utils.fit_lbfgs( sico_iter, ds_trn[:], verbose=0, max_iter=2000, line_search=None)
+        
+        sico_iter.networks[0].layers[1].fit_shifts(val=False)
+        utils.fit_lbfgs( sico_iter, ds_trn[:], verbose=0, max_iter=2000, line_search=None)
+        t2 = time()
+        #print("   Refinement time: %0.2f min"%( (t2-t1)/60 ))
+        LLs[ii,0] = LLn_val - sico_iter.eval_models(ds_val[:], null_adjusted=False)[0]
+        LLs[ii,1] = LLn_trn - sico_iter.eval_models(ds_trn[:], null_adjusted=False)[0] 
+        t2 = time()
+        print("  %2d  %8.5f  %8.5f (%0.2f min)"%(ii, LLs[ii,1], LLs[ii,0],(t2-t0)/60 ))
+        mods.append(deepcopy(sico_iter).to(torch.device("cpu")))
+        #running_shifts = deepcopy(sico_iter.networks[0].layers[1].x_fixed.data.cpu().numpy())
+
+    a = np.nanargmax(LLs[:,1])
+    best_mod = deepcopy(mods[a].to(torch.device("cpu")))
+    NI = best_mod.networks[0].layers[1].num_inh
+    NE = best_mod.networks[0].layers[1].num_filters - NI
+    print( "  %d-%d best model (%d) LLs (val/trn): "%(NE, NI, a), LLs[a,:])
+    if to_plot:
+        display_sampler_model(best_mod)
+    if save_models:
+        return best_mod, mods, LLs
+    else:
+        return best_mod
+# END produce_best_sampler_model2()
+
 
 def produce_best_sampler_model( 
     ds_trn, ds_val, drift, LorR, XTreg, logXTmult, Greg, NE=2, NI=2, n_iter=8, LLn_trn=0, LLn_val=0, nlags=None,
@@ -379,7 +498,7 @@ def produce_best_sampler_model(
         device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
         print("  PBM WARNING: device not entered, using device:", device)
 
-    print('NE, NI = %d, %d'%(NE, NI))
+    #print('NE, NI = %d, %d'%(NE, NI))
     mods = []
     LLs = np.zeros([n_iter, 2])
     running_shifts = 0  # track shifts to save time to not have to center all the time
@@ -397,14 +516,14 @@ def produce_best_sampler_model(
         sico_iter = center_model(sico_iter, include_binoc=True, verbose=False)
         t1 = time()
         # ratchet in sigmas over three steps
-        if np.max(sico_iter.networks[0].layers[1].sigmas.data.cpu().numpy()) > 1.0:
-            print("       Highest sigma %0.2f. Decreasing to 1"%np.max(sico_iter.networks[0].layers[1].sigmas.data.cpu().numpy()))
-            sico_iter.networks[0].layers[1].fit_shifts(val=True, fixed_sigmas=True, sigma0 = 1.0)
-            utils.fit_lbfgs( sico_iter, ds_trn[:], verbose=0, max_iter=2000, line_search=None)
-        if np.max(sico_iter.networks[0].layers[1].sigmas.data.cpu().numpy()) > 0.6:
-            print("       Highest sigma %0.2f. Decreasing to 0.6"%np.max(sico_iter.networks[0].layers[1].sigmas.data.cpu().numpy()))
-            sico_iter.networks[0].layers[1].fit_shifts(val=True, fixed_sigmas=True, sigma0 = 0.6)
-            utils.fit_lbfgs( sico_iter, ds_trn[:], verbose=0, max_iter=2000, line_search=None)
+        #if np.max(sico_iter.networks[0].layers[1].sigmas.data.cpu().numpy()) > 1.0:
+        #    print("       Highest sigma %0.2f. Decreasing to 1"%np.max(sico_iter.networks[0].layers[1].sigmas.data.cpu().numpy()))
+        #    sico_iter.networks[0].layers[1].fit_shifts(val=True, fixed_sigmas=True, sigma0 = 1.0)
+        #    utils.fit_lbfgs( sico_iter, ds_trn[:], verbose=0, max_iter=2000, line_search=None)
+        #if np.max(sico_iter.networks[0].layers[1].sigmas.data.cpu().numpy()) > 0.6:
+        #    print("       Highest sigma %0.2f. Decreasing to 0.6"%np.max(sico_iter.networks[0].layers[1].sigmas.data.cpu().numpy()))
+        #    sico_iter.networks[0].layers[1].fit_shifts(val=True, fixed_sigmas=True, sigma0 = 0.6)
+        #    utils.fit_lbfgs( sico_iter, ds_trn[:], verbose=0, max_iter=2000, line_search=None)
         
         sico_iter.networks[0].layers[1].fit_shifts(val=False)
         utils.fit_lbfgs( sico_iter, ds_trn[:], verbose=0, max_iter=2000, line_search=None)
