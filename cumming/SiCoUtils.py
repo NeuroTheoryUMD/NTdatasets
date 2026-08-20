@@ -372,7 +372,14 @@ def produce_best_model(
 
 def extend_binocular_model( mod0, addEorI=0, LorR=0, seed=101 ):
     """
-    Extend a binocular model by adding one excitatory or inhibitory unit
+    Extend a binocular model by adding one excitatory or inhibitory unit. This preserves the previous model structure
+    but generally not needing to be repeated too much since very little randomness except for new filter.
+
+    Args:
+        mod0: previous model to extend
+        addEorI: 0 to add excitatory, 1 to add inhibitory
+        LorR: ocular dominance for new filter (default=0)
+        seed: random seed for new filter (default=101)
     """
     from NDNT.modules.layers import BinocShiftLayer
 
@@ -420,6 +427,117 @@ def extend_binocular_model( mod0, addEorI=0, LorR=0, seed=101 ):
     # Not currently doing readout layer -- would have to reshape first
     
     return mod1
+# END extend_binocular_model()
+
+
+def prune_binocular_model( mod0, subunit_n=None ):
+    """
+    Extend a binocular model by adding one excitatory or inhibitory unit. This preserves the previous model structure
+    but generally not needing to be repeated too much since very little randomness except for new filter.
+    
+    Args:
+        mod0: previous model to extend
+        subunit_n: index of the subunit to remove
+    """
+    from NDNT.modules.layers import BinocShiftLayer
+    assert subunit_n is not None, "Must enter subunit_n to prune model"
+    NI0 = mod0.networks[0].layers[1].num_inh
+    NE0 = mod0.networks[0].layers[1].num_filters - NI0
+    assert subunit_n < (NE0+NI0), "subunit_n must be less than total number of subunits"
+    
+    if isinstance(mod0.networks[0].layers[1], BinocShiftLayer):
+        sample_layer = True
+        LorR = mod0.networks[0].layers[1].LorR
+    else:
+        sample_layer = False
+        print('Warning: need to specify which unit to remove.')
+
+    if subunit_n < NE0:
+        NE = NE0 - 1
+        NI = NI0
+    else:
+        NE = NE0
+        NI = NI0 - 1
+
+    XTcoupled = True
+    logXTmult = 0
+    time_cov = len(mod0.networks) > 3
+
+    if 'd2x' in mod0.networks[0].layers[0].reg.vals:
+        d2xt = mod0.networks[0].layers[0].reg.vals['d2x']
+        if mod0.networks[0].layers[0].reg.vals['d2x'] > 0:
+            XTcoupled = False
+            logXTmult = np.log10(mod0.networks[0].layers[0].reg.vals['d2t']/mod0.networks[0].layers[0].reg.vals['d2x'])
+    else:
+        d2xt = None
+
+    mod1 = baseline_sico(NE, NI, LorR=LorR, nlags=mod0.networks[0].layers[0].filter_dims[-1],
+                         XTreg=d2xt, Greg=mod0.networks[0].layers[2].reg.vals['glocalx'], logXTmult=logXTmult,
+                         sample_layer=sample_layer,
+                         drift_term=mod0.networks[1].layers[0].weight.data.cpu().numpy(),
+                         time_covariates=time_cov)
+
+    # Copy model parameters appropriately
+    weight_mapping = np.array(list(set(np.arange(NE0+NI0)) - set([subunit_n])), dtype=int)
+    mod1.networks[0].layers[0].weight.data = mod0.networks[0].layers[0].weight.data[:, weight_mapping].clone()
+
+    mod1.networks[0].layers[1].weight.data = mod0.networks[0].layers[1].weight.data[:, weight_mapping].clone()
+    mod1.networks[0].layers[1].bias.data = mod0.networks[0].layers[1].bias.data[weight_mapping].clone()
+    if sample_layer:
+        mod1.networks[0].layers[1].shifts.data = mod0.networks[0].layers[1].shifts.data[weight_mapping].clone()
+        mod1.networks[0].layers[1].sigmas.data = mod0.networks[0].layers[1].sigmas.data[weight_mapping].clone()
+    else:
+        mod1.networks[0].layers[1].masks.data = mod0.networks[0].layers[1].masks.data[:, weight_mapping].clone()
+    # Also do readout layer -- have to reshape first
+    tar_dims = mod0.networks[0].layers[2].filter_dims[:2]
+    mod1.networks[0].layers[2].weight.data = mod0.networks[0].layers[2].weight.data.clone().reshape(tar_dims)[weight_mapping, :].reshape([-1,1])
+    if len(mod0.networks) == 1:
+        mod1.networks[0].layers[2].bias.data = mod0.networks[0].layers[2].bias.data.clone()
+    else:
+        for ii in range(1, len(mod0.networks)):
+            mod1.networks[ii] = deepcopy(mod0.networks[ii]).to(torch.device("cpu"))
+
+    return mod1
+# END prune_binocular_model()
+
+
+def cull_binocular_model( mod0, ds_trn, LLthresh=0.05, refit=True, LLnullTR=None ):
+    """
+    Will reduce model by one subunit, refit (or not) and judge change of each in training performance.
+    Will activate LLnull if want decision to be returned rather than whole dictionary.
+    LLthresh should be a fraction, but needs LLnullTR if so. Leave it at none if wants to remove the 
+    highest unit regardless.
+    """
+    device = ds_trn[0]['robs'].device
+    NI = mod0.networks[0].layers[1].num_inh
+    NE = mod0.networks[0].layers[1].num_filters - NI
+    NF = NE+NI
+    mod0 = mod0.to(device)
+    mods, dLLs = [], []
+    # Compute training LL (no need for null)
+    LL0 = mod0.eval_models(ds_trn[:])
+    LLs = np.zeros([NF,2], dtype=np.float32)
+    for ii in range(NE+NI):
+        mod_iter = prune_binocular_model(mod0, ii ).to(device)
+        LLs[ii,0] = mod_iter.eval_models(ds_trn[:])[0]
+        if refit:
+            mod_iter.set_parameters(layer_target=0, val=False)
+            mod_iter.set_parameters(layer_target=1, val=False)
+            for jj in range(1, len(mod0.networks[0])):
+                mod_iter.set_parameters(ffnet_target=jj, val=False)
+            mod_iter.networks[-1].layers[-1].set_parameters(name='bias', val=True)
+            mod_iter.list_parameters()                
+            utils.fit_lbfgs( mod_iter, ds_trn[:], verbose=0, max_iter=2000) #, line_search=None)
+            LLs[ii,1] = mod_iter.eval_models(ds_trn[:])[0]
+            mods.append(deepcopy(mod_iter.to(torch.device('cpu'))))
+            dLLs.append(deepcopy(LL0-LLs[ii,:]))
+        else:
+            dLLs.append(deepcopy(LL0-LLs[ii,0]))
+        print("Subunit %2d:"%ii, dLLs[-1])
+
+    return {'mods':mods, 'dLLs': np.array(dLLs, dtype=np.float32)}
+# END cull_binocular_model()
+
 
 def produce_best_sampler_model2(
         ds_trn, ds_val, model=None, LR=0, addEorI=0, time_covariates=0,
