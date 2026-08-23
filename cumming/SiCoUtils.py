@@ -106,7 +106,7 @@ def sico_path(ds_trn, ds_val, LLn_trn=0, LLn_val=0, drift_term=None,
         if sample_layer:
             #sicoE1 = produce_best_sampler_model(ds_trn, ds_val, drift_term, LR, XTreg, logXTmult, Greg, NE=NE, NI=NI, time_covariates=time_covariates,
             #                                    n_iter=n_iter, nlags=nlags, LLn_trn=LLn_trn, LLn_val=LLn_val, device=device, to_plot=False)
-            sicoE1 = produce_best_sampler_model2(ds_trn, ds_val, model=mod_path[-1], LR=LR, addEorI=0, time_covariates=time_covariates,
+            sicoE1 = produce_best_sampler_model(ds_trn, ds_val, model=mod_path[-1], LR=LR, addEorI=0, time_covariates=time_covariates,
                                                  n_iter=n_iter, LLn_trn=LLn_trn, LLn_val=LLn_val, device=device, to_plot=False)
         else:
             sicoE1 = produce_best_model(ds_trn, ds_val, drift_term, LR, XTreg, logXTmult, Greg, NE=NE, NI=NI, 
@@ -138,7 +138,7 @@ def sico_path(ds_trn, ds_val, LLn_trn=0, LLn_val=0, drift_term=None,
         if sample_layer:
             #sicoI1 = produce_best_sampler_model(ds_trn, ds_val, drift_term, LR, XTreg, logXTmult, Greg, NE=NE, NI=NI, time_covariates=time_covariates,
             #                                    n_iter=n_iter, nlags=nlags, LLn_trn=LLn_trn, LLn_val=LLn_val, device=device, to_plot=False)
-            sicoI1 = produce_best_sampler_model2(ds_trn, ds_val, model=mod_path[-1], LR=LR, addEorI=1, time_covariates=time_covariates,
+            sicoI1 = produce_best_sampler_model(ds_trn, ds_val, model=mod_path[-1], LR=LR, addEorI=1, time_covariates=time_covariates,
                                                  n_iter=n_iter, LLn_trn=LLn_trn, LLn_val=LLn_val, device=device, to_plot=False)
         else:
             sicoI1 = produce_best_model(ds_trn, ds_val, drift_term, LR, XTreg, logXTmult, Greg, NE=NE, NI=NI, 
@@ -265,8 +265,7 @@ def sico_path_parallel(ds_trn, ds_val, LLn_trn=0, LLn_val=0, drift_term=None,
         # plus one excitation
         NE += 1
         print('NE, NI = %d, %d'%(NE, NI))
-        sicoE1, next_mods, next_LLs = increment_models(ds_trn, ds_val, modlist=model_iterations[-1], addEorI=0, prev_LLs=LL_iterations[-1],
-                                                       LLn_trn=LLn_trn, LLn_val=LLn_val)
+        sicoE1, next_mods, next_LLs = increment_models(ds_trn, ds_val, modlist=model_iterations[-1], addEorI=0)
 
         exc_keeper_list, excLLs = [], []
         for ii in range(len(next_mods)):
@@ -291,8 +290,7 @@ def sico_path_parallel(ds_trn, ds_val, LLn_trn=0, LLn_val=0, drift_term=None,
         print('NE, NI = %d, %d'%(NE, NI))
 
         # note this takes the full list (some of which might not have been incremented)
-        sicoI1, next_mods, next_LLs = increment_models(ds_trn, ds_val, modlist=next_mods, addEorI=1, prev_LLs=LL_iterations[-1],
-                                                       LLn_trn=LLn_trn, LLn_val=LLn_val)
+        sicoI1, next_mods, next_LLs = increment_models(ds_trn, ds_val, modlist=next_mods, addEorI=1)
 
         inh_keeper_list, inhLLs = [], []
         for ii in range(len(next_mods)):
@@ -731,7 +729,6 @@ def load_sicos( dataloc, ee, cc, id=None, verbose=False ):
 
 
 def increment_models(ds_trn, ds_val, modlist=None, addEorI=0, cull_list=True):
-    
     """
     This implements a simple model selection procedure where we fit n_iter models
 
@@ -756,8 +753,8 @@ def increment_models(ds_trn, ds_val, modlist=None, addEorI=0, cull_list=True):
     for ii in range(num_copies):
         t0=time()
         # Initial model: unconstrained mask on one side (less dominant eye)
-        LLprev[ii,0] = sico_iter.eval_models(ds_trn[:], null_adjusted=False)[0]  # training LL (used for decisions)
-        LLprev[ii,1] = sico_iter.eval_models(ds_val[:], null_adjusted=False)[0]  # validation LL (just as additional info)
+        LLprev[ii,0] = modlist[ii].eval_models(ds_trn[:], null_adjusted=False)[0]  # training LL (used for decisions)
+        LLprev[ii,1] = modlist[ii].eval_models(ds_val[:], null_adjusted=False)[0]  # validation LL (just as additional info)
 
         sico_iter = extend_binocular_model(modlist[ii], addEorI=addEorI, seed=101+ii).to(device) 
         sico_iter.networks[0].layers[2].reg.vals['glocalx'] *= 0.1
