@@ -34,19 +34,7 @@ class LGNdataset(SensoryBase):
         self.cell_table = lgn_tools.build_cell_trial_table()
         self.stim_lib = lgn_tools.StimLibraryH5()
 
-        self.current_data = None
-        #self.datafile = datafile
-        #if device is None:
-        #    device = torch.device('cpu') # default is to store on CPU
-        #self.device = device
-        #self.num_lags = num_lags
-
-        # Internal variables
-        #self.test_inds = None
-        #self.val_inds = None
-        #self.train_inds = None
-        #self.block_inds = None
-
+        self.dataset = None
     # END LGNdata.__init__
  
     def info(self):
@@ -179,24 +167,42 @@ class LGNdataset(SensoryBase):
         if frac > 1:
             s = np.repeat(s, frac, axis=0)
 
-        self.current_data = {
+        self.dataset = {
             'expt_n': expt_n, 'pen_n': pen_n, 'stim_type': stim_type, 'contrast': contrast,
             'frac': frac, 'crop': crop, 'top_corner': top_corner,
             'stim': s.reshape([len(fts)*frac,-1]), 'robs': robs, 
             'xy': trial_data['xy_class'], 'rms_contrast': trial_data['contrast_rms'], 
             'names': trial_data['unit_names']}
-        return self.current_data
+        return self.dataset
         # END LGNdata.assemble_penetration()
 
 
-    def make_datasets(self, expt_n, pen_n, stim_type='NAT', contrast='h', 
-                      frac=1, crop=None, top_corner=None, 
-                      train_inds=None, val_inds=None, 
+    def make_datasets(self, expt_n, pen_n, stim_type='NAT', contrast='h', cell_list=None,
+                      frac=1, crop=None, top_corner=None, spk_hist_dict=None,
+                      trn_inds=None, val_inds=None, 
                       device=None, verbose=True):
         """
         Build a dataset for a specific experiment and penetration.
+        spk_hist_dict would define spike history term to add with following arguments: 
+            -- num_lags (required)
+            -- dt (optional, default 1)
+            -- doubling_time (optional, default None)
+
+        Args:
+            expt_n (int): Experiment number
+            pen_n (int): Penetration number
+            stim_type (str): Stimulus type ('NAT' or 'SBN')
+            contrast (str): Contrast level ('h' for high, 'l' for low)
+            cell_list (list, optional): List of cell indices to include. If None, all cells are included.
+            frac (int): Fraction of frame resolution to use
+            crop (int, optional): Size to crop the stimulus to. If None, stimulus at native size (48x48)
+            top_corner (tuple, optional): Top corner coordinates for cropping. If None, center cropping is used.
+            spk_hist_dict (dict, optional): Dictionary defining spike history term with keys: 'num_lags', 'dt', 'doubling_time'.
+            trn_inds (array-like, optional): Indices for training data. If None, they will be generated automatically.
+            val_inds (array-like, optional): Indices for validation data. If None, they will be generated automatically.
+            device (torch.device, optional): Device for data inside dicts. Defaults to CPU if None.
+            verbose (bool): print extra info about building process
         """
-        from NTdatasets.generic import GenericDataset
         if device is None:
             device = torch.device('cpu') # default is to store on CPU
 
@@ -210,13 +216,29 @@ class LGNdataset(SensoryBase):
         #Nframes = expt_dict['stim'].shape[0]
         NT, NC = expt_dict['robs'].shape
         #assert Nframes*frac == NT, "Mismatch in number of frames and robs"
+        if cell_list is not None:
+            if utils.is_int(cell_list):
+                cell_list = [cell_list]
+            if isinstance(cell_list, list):
+                cell_list = np.array(cell_list, dtype=int)
+            assert np.all(cell_list < NC), "Cell list contains invalid cell indices"
+            expt_dict['robs'] = expt_dict['robs'][:, cell_list]
+            #print(cell_list, cell_list.shape, expt_dict['xy'])
+            #expt_dict['xy'] = expt_dict['xy'][cell_list]
+            expt_dict['xy'] = [expt_dict['xy'][i] for i in cell_list]
+            NC = len(cell_list)
+        else:
+            cell_list = np.arange(NC)
+        if verbose:
+            for cc in range(NC):
+                print("  Cell %d (%s): %d spikes"%(cell_list[cc], expt_dict['xy'][cc], np.sum(expt_dict['robs'][:, cc])))
 
         buffer_size = self.num_lags*frac
         dfs = np.ones([NT, NC], dtype=np.float32)
 
-        if train_inds is not None:
+        if trn_inds is not None:
             print("Not fully set up for this -- need to make corresponding data-filters")
-            self.train_inds = deepcopy(train_inds)
+            self.trn_inds = deepcopy(trn_inds)
             if val_inds is not None:
                 self.val_inds = deepcopy(val_inds)
             else: 
@@ -239,18 +261,46 @@ class LGNdataset(SensoryBase):
 
         trn_inds = np.concatenate(trn_inds)
         val_inds = np.concatenate(val_inds)
+        self.dataset['trn_inds'] = trn_inds
+        self.dataset['val_inds'] = val_inds
 
-        # Put info about particular dataset into general dataset object and then return generic dataset
-        
-        ds_trn = GenericDataset({
-            'stim': torch.tensor(expt_dict['stim'][trn_inds, :], dtype=torch.float32),
-            'robs': torch.tensor(expt_dict['robs'][trn_inds, :], dtype=torch.float32),
-            'dfs': torch.tensor(dfs[trn_inds, :], dtype=torch.float32)}, device=device)
+        # Put info about particular dataset into general dataset object and then return generic dataset 
+        ds_trn = {
+            'stim': torch.tensor(expt_dict['stim'][trn_inds, :], dtype=torch.float32, device=device),
+            'robs': torch.tensor(expt_dict['robs'][trn_inds, :], dtype=torch.float32, device=device),
+            'dfs': torch.tensor(dfs[trn_inds, :], dtype=torch.float32, device=device)}
 
-        ds_val = GenericDataset({
-            'stim': torch.tensor(expt_dict['stim'][val_inds, :], dtype=torch.float32),
-            'robs': torch.tensor(expt_dict['robs'][val_inds, :], dtype=torch.float32),
-            'dfs': torch.tensor(dfs[val_inds, :], dtype=torch.float32)}, device=device)
+        ds_val = {
+            'stim': torch.tensor(expt_dict['stim'][val_inds, :], dtype=torch.float32, device=device),
+            'robs': torch.tensor(expt_dict['robs'][val_inds, :], dtype=torch.float32, device=device),
+            'dfs': torch.tensor(dfs[val_inds, :], dtype=torch.float32, device=device)}
+
+        # Make spike-history term if relevant
+        if spk_hist_dict is not None:
+            if not isinstance(spk_hist_dict, dict):
+                print("spk_hist_dict must be a dictionary with keys: nlags (req), dt (default 1), doubling_time (def None)")
+                print("...Not included until you get it right")
+            else:
+                Xspike_history = self.generate_spike_history(robs=expt_dict['robs'], **spk_hist_dict)
+                print( "  Spike-history has %d temporal dims"%(Xspike_history.shape[1]))
+                ds_trn['Xspk_hist'] = torch.tensor(Xspike_history.reshape([NT, -1]), dtype=torch.float32, device=device)[trn_inds, :]
+                ds_val['Xspk_hist'] = torch.tensor(Xspike_history.reshape([NT, -1]), dtype=torch.float32, device=device)[val_inds, :]
+
+        # OLD GENERIC DATASET CONSTRUCTION -- now just returning dicts with torch tensors
+        # from NTdatasets.generic import GenericDataset
+        #ds_trn = GenericDataset({
+        #    'stim': torch.tensor(expt_dict['stim'][trn_inds, :], dtype=torch.float32),
+        #    'robs': torch.tensor(expt_dict['robs'][trn_inds, :], dtype=torch.float32),
+        #    'dfs': torch.tensor(dfs[trn_inds, :], dtype=torch.float32),
+        #    'Xspk_hist': torch.tensor(Xspike_history.reshape([NT, -1])[trn_inds, :], dtype=torch.float32)
+        #    }, device=device)
+
+        #ds_val = GenericDataset({
+        #    'stim': torch.tensor(expt_dict['stim'][val_inds, :], dtype=torch.float32),
+        #    'robs': torch.tensor(expt_dict['robs'][val_inds, :], dtype=torch.float32),
+        #    'dfs': torch.tensor(dfs[val_inds, :], dtype=torch.float32),
+        #    'Xspk_hist': torch.tensor(Xspike_history.reshape([NT, -1])[val_inds, :], dtype=torch.float32)
+        #    }, device=device)
 
         #print("%d cells set up from penetration %d of experiment %d"%(NC, pen_n, expt_n)) 
         return ds_trn, ds_val
@@ -258,23 +308,23 @@ class LGNdataset(SensoryBase):
 
     def quick_stas( self, lag=None, to_plot=True ):
         """
-        Quick STA for self.current_data 
+        Quick STA for self.dataset 
         """
-        if self.current_data is None:
-            print("No current data -- need to run assemble_penetration first")
+        if self.dataset is None:
+            print("No dataset has been built -- need to run assemble_penetration first")
             return None
 
         if lag is None:
-            lag = 1*self.current_data.frac  # one lag in is pretty good, somehow
+            lag = 1*self.dataset.frac  # one lag in is pretty good, somehow
 
-        L = int(np.sqrt(self.current_data['stim'].shape[1]))
-        NC = self.current_data['robs'].shape[1]
+        L = int(np.sqrt(self.dataset['stim'].shape[1]))
+        NC = self.dataset['robs'].shape[1]
 
         # Cross-correlation of stimulus and response
         if lag == 0:
-            stas = (self.current_data['stim'].T@self.current_data['robs']).reshape([L, L, NC]) / self.current_data['robs'].sum(axis=0)[None, None, :]
+            stas = (self.dataset['stim'].T@self.dataset['robs']).reshape([L, L, NC]) / self.dataset['robs'].sum(axis=0)[None, None, :]
         else:
-            stas = (self.current_data['stim'][:-lag, :].T@self.current_data['robs'][lag:, :]).reshape([L, L, NC]) / self.current_data['robs'][lag:, :].sum(axis=0)[None, None, :]
+            stas = (self.dataset['stim'][:-lag, :].T@self.dataset['robs'][lag:, :]).reshape([L, L, NC]) / self.dataset['robs'][lag:, :].sum(axis=0)[None, None, :]
 
         num_rows = int(np.ceil(NC/6))        
         if to_plot:
@@ -319,32 +369,6 @@ class LGNdataset(SensoryBase):
         else:
             return seq[['trial_key', 'modality', 'type', 'code', 'contrast']].reset_index(drop=True)
     # END LGNdata.trial_sequence()
-
-    def generate_spike_history(self, nlags ):
-        """
-        Will generate X-matrix that contains Robs information for each cell. It will
-        use the default resolution of robs, and simply go back a certain number of lags.
-        To have it applied to the corresponding neuron, will need to use add_layers
-        """
-
-        NC = self.NC
-        self.Xspk = self.time_embedding( self, stim=self.robs, nlags=nlags+1, flatten=False )
-        self.Xspk = self.Xspk[:, :, 1:].reshape([self.Xspk.shape[0], -1])
-
-        anchors = np.round(self.mask_lags + np.linspace(0,np.sqrt(L-self.mask_lags),num_segs+1)**2).astype(int)[:-1]
-        print('Anchors:', anchors)
-        #anchors = np.concatenate(
-        #    (
-        #        np.arange(0, L * onset_period, onset_seg_len),
-        #        np.arange(L * onset_period, L + 1, Tseg),
-        #    )
-        #).astype(int)
-
-        Xtrial_time = self.design_matrix_drift(L, anchors=anchors, 
-                                                const_left=True, zero_left=False, zero_right=True)
-
-
-    # END generate_spike_history
 
     def __getitem__(self, index):
         
