@@ -11,7 +11,8 @@ from NTdatasets.cumming.BinocUtils import plot_sico_readout
 ############## SiCo Fitting Pathways ##############
 def sico_path(ds_trn, ds_val, LLn_trn=0, LLn_val=0, drift_term=None,
               XTreg=None, Greg=None, XTcoupled=False, logXTmult=0, sample_layer=True,
-              n_iter=8, time_covariates=True, expt_n=None, cell_n=None, id=None, device=None):
+              n_iter=8, time_covariates=True, device=None,
+              save_dir=None, expt_n=None, cell_n=None, id=None):
     """
     Fit a series of SICO models with increasing numbers of excitatory and inhibitory filters
 
@@ -28,10 +29,11 @@ def sico_path(ds_trn, ds_val, LLn_trn=0, LLn_val=0, drift_term=None,
         sample_layer: if True, use BinocShiftLayer, otherwise use MaskConvLayer
         n_iter: number of iterations to fit each model (default=8)
         time_covariates: if True, include time covariates in the model (default=True)
+        device: torch device to use for fitting (default=None, will use cuda if available)
         expt_n: experiment number for saving models (optional)
         cell_n: cell number for saving models (optional)
         id: additional optional identifier string to add to filename for saving models
-        device: torch device to use for fitting (default=None, will use cuda if available)
+        save_dir: directory to save models (optional, default=None, will save in current directory)
     """
     assert drift_term is not None, "Need to enter 'drift_term'"
     nlags = ds_trn[0]['stim'].shape[-1]//72
@@ -48,6 +50,15 @@ def sico_path(ds_trn, ds_val, LLn_trn=0, LLn_val=0, drift_term=None,
         save_name += str(id)
     else:
         save_name += 'path'
+    if save_dir is not None:
+        if save_dir[-1] != '/':
+            save_dir += '/'
+        # Check if directory exists, if not create it
+        import os
+        if not os.path.exists(save_dir):
+            os.makedirs(save_dir)
+        print('  Creating directory for saving models:', save_dir)
+        save_name = save_dir + '/' + save_name
     
     if time_covariates: # replace boolean with number (messy I know but has good default behavior)
         time_covariates = ds_trn[0]['Xframe_switch'].shape[-1]
@@ -655,7 +666,7 @@ def prune_binocular_model( mod0, subunit_n=None ):
 # END prune_binocular_model()
 
 
-def cull_binocular_model( mod0, ds_trn, LLthresh=0.05, refit=True, LLnullTR=None ):
+def prune_binocular_subunit( mod0, ds_trn, LLthresh=0.05, refit=True, LLnullTR=None, verbose=True ):
     """
     Will reduce model by one subunit, refit (or not) and judge change of each in training performance.
     Will activate LLnull if want decision to be returned rather than whole dictionary.
@@ -686,10 +697,39 @@ def cull_binocular_model( mod0, ds_trn, LLthresh=0.05, refit=True, LLnullTR=None
         else:
             dLLs.append(deepcopy(LL0-LLs[ii,0]))
         mods.append(deepcopy(mod_iter.to(torch.device('cpu'))))
-        print("Subunit %2d:"%ii, dLLs[-1])
+        if verbose:
+            print("  Subunit %2d:"%ii, dLLs[-1])
 
     return {'mods':mods, 'dLLs': np.array(dLLs, dtype=np.float32)}
-# END cull_binocular_model()
+# END prune_binocular_subunit()
+
+
+def binocular_cull_path( mod0, ds_trn, LLn, verbose=True ):
+    mod_iter = deepcopy(mod0)
+    if isinstance(LLn, dict):
+        LLn = LLn['train']
+    LL0 = LLn - mod0.eval_models(ds_trn[:])[0]
+    dLLlist = []
+    mods = [deepcopy(mod0)]
+    NI = mod0.networks[0].layers[1].num_inh
+    NE = mod0.networks[0].layers[1].num_filters-NI
+    keep_going = True
+    LLiter = LL0
+    while keep_going:
+        print("Evaluate pruning E%d I%d:"%(NE, NI), LLiter)
+        cull_dict = prune_binocular_subunit( mod_iter, ds_trn, verbose=verbose )
+        best_clip = np.argmax(cull_dict['dLLs'][:,1])
+        mod_iter = deepcopy(cull_dict['mods'][best_clip])
+        mods.append(deepcopy(mod_iter))
+        dLLlist.append(cull_dict['dLLs'][best_clip,1])
+        NI = mod_iter.networks[0].layers[1].num_inh
+        NE = mod_iter.networks[0].layers[1].num_filters-NI
+        LLiter = LLn - mod_iter.eval_models(ds_trn[:])[0]
+        print("E%d I%d (elim sub%d: frac change %5.2f, cumulative %5.2f: "%(NE, NI, best_clip, dLLlist[-1]/LL0, (LL0-LLiter)/LL0) )
+        if NE+NI <= 2:
+            keep_going = False
+    return {'mods':mods, 'dLLs':dLLlist, 'LLmax': LL0}
+# END binocular_cull_path()
 
 
 def load_sicos( dataloc, ee, cc, id=None, verbose=False ):
@@ -717,13 +757,13 @@ def load_sicos( dataloc, ee, cc, id=None, verbose=False ):
     else:
         fns = sorted(relevant_fns)
         if verbose:
-            print('Found %d relevant files:'%(len(relevant_fns)))
+            print('Found %d relevant models:'%(len(relevant_fns)))
             for ii in range(len(relevant_fns)):
                 print('  %d: %s'%(ii, fns[ii]))
         else:
-            print('Found %d relevant files, e.g.,'%(len(relevant_fns)), fns[0])
+            print('Found %d relevant models, e.g.,'%(len(relevant_fns)), fns[0])
         for fn in fns:
-            mods.append( NDN.load_model(os.path.join(dataloc, fn)) )
+            mods.append( NDN.load_model(os.path.join(dataloc, fn)).to(torch.device('cpu')) )
     return mods
 # END load_sicos()
 
