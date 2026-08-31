@@ -356,7 +356,7 @@ class binocular_singleT(SensoryBase):
         self.frame_switch_mat = torch.tensor(switch_mat, dtype=torch.float32)
     # END binocular_single.compute_frame_switch_regressors()
 
-    def compute_nullLLs( self, cc=None, drift_term=None, Dreg=1.0, bias_only=False ):
+    def compute_nullLLs( self, cc=None, drift_term=None, Dreg=1.0, bias_only=False, verbose=True ):
         """
         Compute the log-likelihood of the data under a null model (no stimulus terms, only bias and drift).
         """
@@ -384,11 +384,13 @@ class binocular_singleT(SensoryBase):
             utils.fit_lbfgs( drift_mod, self[self.train_inds], verbose=False)
 
         LLnull = drift_mod.eval_models(self[self.val_indsA], null_adjusted=False)[0]
-        print( "  LLnull (valA) = %6.4f"%LLnull)
         LLnullB = drift_mod.eval_models(self[self.val_indsB], null_adjusted=False)[0]
-        print( "  LLnull (valB) = %6.4f"%LLnullB) 
         LLnullTR = drift_mod.eval_models(self[self.train_inds], null_adjusted=False)[0]
-        print( "  LLnull (trn)  = %6.4f"%LLnullTR)
+        if verbose:
+            print( "  LLnull (valA) = %6.4f"%LLnull)
+            print( "  LLnull (valB) = %6.4f"%LLnullB) 
+            print( "  LLnull (trn)  = %6.4f"%LLnullTR)
+
         drift = drift_mod.get_weights()
         drift = drift-np.mean(drift)  
         return {'valA': LLnull, 'valB': LLnullB, 'train': LLnullTR, 'drift_term': drift, 'drift_mod': drift_mod}
