@@ -34,8 +34,8 @@ def sico_path(ds_trn, ds_val, LLn_trn=0, LLn_val=0, drift_term=None,
         cell_n: cell number for saving models (optional)
         id: additional optional identifier string to add to filename for saving models
         save_dir: directory to save models (optional, default=None, will save in current directory)
-        reuse_best: if True, reuse the top 50% of subunits from best model from the previous iteration 
-            on the first half of iterations (default=False)
+        reuse_best: if True, reuse the top 25% of subunits from best model from the previous iteration 
+            on the quarter of iterations (default=False)
     """
     assert drift_term is not None, "Need to enter 'drift_term'"
     nlags = ds_trn[0]['stim'].shape[-1]//72
@@ -149,6 +149,9 @@ def sico_path(ds_trn, ds_val, LLn_trn=0, LLn_val=0, drift_term=None,
         else:
             print("EXC+1 (%d,%d) no good: %0.5f < %0.5f\n"%(NE, NI, LL, LLprev))
             NE += -1
+
+        if reuse_best:
+            reuse_top = mod_path[-1]
 
         # plus one inhibition
         NI += 1
@@ -522,7 +525,7 @@ def produce_best_model(
         t0=time()
 
         # Initial model: unconstrained mask on one side (less dominant eye)
-        if (reuse_top is not None) & (ii < n_iter//2):
+        if (reuse_top is not None) & (ii < n_iter//4):
             sico_iter = extend_binocular_model(reuse_top, addEorI=0, seed=101+ii, top_subunits=True, ds_trn=ds_trn).to(device) 
             sico_iter.networks[0].layers[2].reg.vals['glocalx'] = Greg
         else:
@@ -896,7 +899,7 @@ def produce_best_sampler_model(
         t0=time()
 
         # Initial model: unconstrained mask on one side (less dominant eye)
-        if (reuse_top is not None) & (ii < n_iter//2):
+        if (reuse_top is not None) & (ii < n_iter//4):
             sico_iter = extend_binocular_model(reuse_top, addEorI=0, seed=101+ii, top_subunits=True, ds_trn=ds_trn).to(device) 
             sico_iter.networks[0].layers[2].reg.vals['glocalx'] = Greg
         else:
