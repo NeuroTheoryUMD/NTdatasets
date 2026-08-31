@@ -611,9 +611,14 @@ def extend_binocular_model( mod0, addEorI=0, LorR=0, seed=101, top_subunits=Fals
         if mod0.networks[0].layers[0].reg.vals['d2x'] > 0:
             XTcoupled = False
             logXTmult = np.log10(mod0.networks[0].layers[0].reg.vals['d2t']/mod0.networks[0].layers[0].reg.vals['d2x'])
+            XTreg = mod0.networks[0].layers[0].reg.vals['d2x']
+    elif 'd2xt' in mod0.networks[0].layers[0].reg.vals:
+        XTreg = mod0.networks[0].layers[0].reg.vals['d2xt']
+    else:
+        XTreg = None
 
     mod1 = baseline_sico(NE, NI, LorR=LorR, seed=seed, 
-                         XTreg=mod0.networks[0].layers[0].reg.vals['d2xt'], Greg=mod0.networks[0].layers[2].reg.vals['glocalx'],
+                         XTreg=XTreg, Greg=mod0.networks[0].layers[2].reg.vals['glocalx'],
                          logXTmult=logXTmult,
                          nlags=mod0.networks[0].layers[0].filter_dims[-1],
                          sample_layer=sample_layer,
