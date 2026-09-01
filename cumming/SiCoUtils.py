@@ -590,12 +590,11 @@ def extend_binocular_model( mod0, addEorI=0, LorR=0, seed=101, top_subunits=Fals
         if NE0+NI0 == 2:
             subunit_ranking = np.array([-1, 0])  # make it always choose excitatory if there are two subunits
         else:
-            subunit_ranking = prune_binocular_subunit( mod0, ds_trn, refit=False, verbose=False )['dLLs']
-        print('       Ranking:', subunit_ranking.squeeze())
+            subunit_ranking = prune_binocular_subunit( mod0, ds_trn, refit=False, verbose=False )['dLLs'].squeeze()
+        #print('       Ranking:', subunit_ranking)
         # find the top 50% of subunits based on ranking
         num_keep = (NE0+NI0)//2
-        LLthresh = np.sort(subunit_ranking)[num_keep-1]
-        keep_list = np.where(subunit_ranking <= LLthresh)[0]
+        keep_list = np.argsort(subunit_ranking)[:num_keep]
         print("       Keeping ", keep_list)
     else:
         keep_list = np.arange(NE0+NI0)
