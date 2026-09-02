@@ -1082,6 +1082,21 @@ def baseline_sico(NE, NI, LorR=0, seed=100, XTreg=0.01, logXTmult=0, Greg=0.001,
 # END baseline_sico()
 
 
+def check_nan( mod0 ):
+    """
+    Check if any of the weights in the model are NaN
+    """
+    for nn in range(len(mod0.networks)):
+        for ll in range(len(mod0.networks[nn].layers)):
+            w = mod0.networks[nn].layers[ll].weight.data.cpu().numpy()
+            if np.any(np.isnan(w)):
+                mod0.networks[nn].layers[ll].weight.data[torch.isnan(mod0.networks[nn].layers[ll].weight.data)] = 0.0
+                print("  WARNING: NaN weights in network %d layer %d"%(nn, ll))
+                return True
+    return False
+# END check_nan()
+
+
 def center_filter( k0, dfloor=0.2 ):
     # Make centered filter list based on disparity
     g = np.var(k0, axis=1 )
@@ -1126,6 +1141,10 @@ def center_model( mod0, include_binoc=False, verbose=True ):
     Centers filters and potentially binocular filters of model
     """
     from NDNT.modules.layers import MaskConvLayer, BinocShiftLayer
+
+    if check_nan(mod0):
+        print("  WARNING: NaN weights in model. Not centering.")
+        return mod0
 
     ks0 = mod0.get_weights()
     NF = ks0.shape[-1]
