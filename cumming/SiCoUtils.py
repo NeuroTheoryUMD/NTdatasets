@@ -395,9 +395,9 @@ def sico_reg_path(ds_trn, ds_val, NE=2, NI=2, XTreg0=None, logXTmult=0, XTcouple
 
     bestr = np.where(LLsRx > (np.nanmax(LLsRx)*thresh))[0][-1]
     # really if its better by 1 to go higher... 
-    if bestr > 0:
-        if LLsRx[bestr-1] > (LLsRx[bestr]):
-            bestr = bestr-1
+    #if bestr > 0:
+    #    if LLsRx[bestr-1] > (LLsRx[bestr]):
+    #        bestr = bestr-1
     #print('Chosen Reg 1-1 (%d)'%bestr)
     XTreg = Rvals[bestr]
     LLprev = LLsRx[bestr]
@@ -590,7 +590,8 @@ def extend_binocular_model( mod0, addEorI=0, LorR=0, seed=101, top_subunits=Fals
         if NE0+NI0 == 2:
             subunit_ranking = np.array([-1, 0])  # make it always choose excitatory if there are two subunits
         else:
-            subunit_ranking = prune_binocular_subunit( mod0, ds_trn, refit=False, verbose=False )['dLLs'].squeeze()
+            #subunit_ranking = prune_binocular_subunit( mod0, ds_trn, refit=False, verbose=False )['dLLs'].squeeze()
+            subunit_ranking = prune_binocular_subunit( mod0, ds_trn, refit=True, verbose=False )['dLLs'][:,1]
         #print('       Ranking:', subunit_ranking)
         # find the top 50% of subunits based on ranking
         num_keep = (NE0+NI0)//2
@@ -899,7 +900,7 @@ def produce_best_sampler_model(
 
         # Initial model: unconstrained mask on one side (less dominant eye)
         if (reuse_top is not None) & (ii < n_iter//4):
-            sico_iter = extend_binocular_model(reuse_top, addEorI=0, seed=101+ii, top_subunits=True, ds_trn=ds_trn).to(device) 
+            sico_iter = extend_binocular_model(reuse_top, addEorI=addEorI, seed=101+ii, top_subunits=True, ds_trn=ds_trn).to(device) 
             sico_iter.networks[0].layers[2].reg.vals['glocalx'] = Greg
         else:
             sico_iter = baseline_sico(NE,NI, LorR=LorR, seed=101+ii, bi_bias=True, nlags=nlags, time_covariates=time_covariates,
