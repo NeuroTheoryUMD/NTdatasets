@@ -12,13 +12,14 @@ from NTdatasets.sensory_base import SensoryBase
 
 class binocular_singleT(SensoryBase):
 
-    def __init__(self, expt_num=None, time_embed=0, num_lags=12, skip_lags=0, verbose=True, **kwargs):
+    def __init__(self, expt_num=None, time_embed=0, num_lags=12, skip_lags=0, drift_interval=None, verbose=True, **kwargs):
         """
         Args: 
             expt_num: the experiment index
             time_embed: whether to time-embed the stimulus or not
             num_lags: the number of lags to use in time-embedding
             skip_lags: shift stim to throw out early lags
+            drift_interval: the interval that the drift anchors are spaced
             filename: currently the pre-processed matlab file from Dan's old-style format
             **kwargs: non-dataset specific arguments that get passed into SensoryBase
 
@@ -36,12 +37,14 @@ class binocular_singleT(SensoryBase):
         super().__init__(
             filename, 
             num_lags=num_lags, time_embed=time_embed,
+            drift_interval=drift_interval,
             **kwargs)
 
         self.dt = 0.01 #100Hz
         self.upsample = 1
         self.robs_upsample = None
         self.dfs_upsample = None
+        self.frame_switch_mat = None
 
         if verbose:
             print( "Loading", self.datadir + filename)
@@ -55,6 +58,7 @@ class binocular_singleT(SensoryBase):
 
         self.dims = [1, 72, 1, 1]
         self.divide_stim = False
+        #self.LLsNULL = np.zeros(4, dtype=np.float32)  # will store LLs for train, val, valA, valB
 
         # Responses
         self.unit_index = np.array(Bmatdat['unit_raw_index'], dtype=int)
@@ -143,6 +147,16 @@ class binocular_singleT(SensoryBase):
                 rep_inds.append( np.add(Bmatdat['rep_inds'][cc], -1) ) 
         self.rep_inds = rep_inds
 
+        if drift_interval is not None:
+            #dFT = np.where(np.diff(self.frs) != 0)[0] + 1
+            # len(dFT), dFT[:10]  # every 3 seconds (likely trial time)
+            anchors = np.arange(0, self.NT, drift_interval)
+            drift_tents = self.design_matrix_drift(
+                self.NT, anchors, zero_left=False, zero_right=True, const_right=False)
+            self.Xdrift = torch.tensor(drift_tents, dtype=torch.float32)
+        else:
+            self.Xdrift = None
+
         if verbose:
             print( "Expt %d: %d SUs, %d total units, %d out of %d time points used."%(expt_num, self.numSUs, self.NC, len(used_inds), self.NT))
 
@@ -188,6 +202,9 @@ class binocular_singleT(SensoryBase):
             self.stim = self.time_embedding( stim=stim, nlags=num_lags, verbose=verbose )
             # This will return a torch-tensor
             self.stim_dims[3] = num_lags
+
+        # Also compute frame-switch regressors
+        self.compute_frame_switch_regressors()
     # END binocular_single.prepare_stim()
 
     def separate_eyes(self, val=True):
@@ -221,7 +238,7 @@ class binocular_singleT(SensoryBase):
 
         if len(self.cells_out) == 0:
             out = {
-                'stim': self.stim[idx, :], 
+                'stim': self.stim[idx, :],
                 'robs': robs[idx, :],
                 'dfs': dfs[idx, :]}
             #if self.speckled:
@@ -245,9 +262,9 @@ class binocular_singleT(SensoryBase):
             else:
                 out['Xdrift'] = self.Xdrift[idx, :]
 
+        out['Xframe_switch'] = self.frame_switch_mat[idx, :]
         #if len(self.covariates) > 0:
         #   self.append_covariates( out, idx)
-
         return out
     # END binocular_single.__getitem()
 
@@ -273,8 +290,6 @@ class binocular_singleT(SensoryBase):
 
         if upsample_mult != 1:
             self.prepare_stim(time_embed=self.time_embed, verbose=False)
-        #orig_lags = int(self.num_lags/self.upsample)
-        #self.num_lags = int(self.num_lags*upsample_mult)
 
         if frac == 1:
             # No upsampling needed
@@ -311,5 +326,71 @@ class binocular_singleT(SensoryBase):
 
         if type(self.robs_upsample) != torch.Tensor:
             self.robs_upsample = torch.tensor(self.robs_upsample, dtype=torch.float32, device=device)
-        
-    
+    # END binocular_single.set_upsample()
+
+    def compute_frame_switch_regressors(self):
+        """
+        """
+        from NTdatasets.cumming.BinocUtils import disparity_matrix
+
+        # Derive switches of disparity and frame-time itself
+        dmat = np.repeat(disparity_matrix( self.dispt, self.corrt ), self.upsample, axis=0)
+        disp_switches = np.expand_dims(np.concatenate( (np.sum(abs(np.diff(dmat, axis=0)),axis=1), [0]), axis=0), axis=1)/2
+        disp_switches[np.where(self.frs == 1)[0]] = 0.0
+
+        # Need to time-embed this with number of lags in betwen fr3 (3*upsample-1)
+        switch_mat = self.time_embedding( disp_switches, 3*self.upsample-1).numpy()  # leaves last lag out
+
+        # Add regressors for frame switches
+        if self.upsample > 1:
+            frame_switches = np.zeros([self.NT*self.upsample, 1], dtype=np.float32)
+            frame_switches[np.arange(0, self.NT*self.upsample, self.upsample), 0] = 1.0
+            if self.upsample > 2:
+                switch_mat = np.concatenate(
+                    (switch_mat, utils.create_time_embedding( frame_switches, self.upsample-1)), axis=1) 
+            else:
+                switch_mat = np.concatenate((switch_mat, frame_switches), axis=1) 
+        # Need blank regressor? (it will show up in disparity)
+        #blanks = dmat[:, -1][:, None]
+        #tmat = np.concatenate( (blanks, switches), axis=1 )
+        self.frame_switch_mat = torch.tensor(switch_mat, dtype=torch.float32)
+    # END binocular_single.compute_frame_switch_regressors()
+
+    def compute_nullLLs( self, cc=None, drift_term=None, Dreg=1.0, bias_only=False, verbose=True ):
+        """
+        Compute the log-likelihood of the data under a null model (no stimulus terms, only bias and drift).
+        """
+        from NDNT.modules.layers import NDNLayer
+        from NDNT.networks import FFnetwork
+        from NDNT.NDN import NDN
+        assert cc is not None, "Must set cell number"
+        self.set_cells(cc)
+
+        NA = self.Xdrift.shape[1]
+
+        drift_pars1 = NDNLayer.layer_dict( 
+            input_dims=[1,1,1,NA], num_filters=1, bias=False, norm_type=0, NLtype='softplus')
+        drift_pars1['reg_vals'] = {'d2t': Dreg, 'bcs':{'d2t':0} } 
+        # for stand-alone drift model
+
+        drift_mod = NDN( layer_list = [drift_pars1], loss_type='poisson')
+        drift_mod.networks[0].xstim_n = 'Xdrift'
+        if drift_term is not None:
+            assert drift_term.shape[0] == NA, "drift_term shape does not match Xdrift"
+            drift_mod.networks[0].layers[0].weight.data = torch.tensor(drift_term, dtype=torch.float32)
+            drift_mod.set_parameters(name='weight', val=False)
+
+        if drift_term is None or bias_only:
+            utils.fit_lbfgs( drift_mod, self[self.train_inds], verbose=False)
+
+        LLnull = drift_mod.eval_models(self[self.val_indsA], null_adjusted=False)[0]
+        LLnullB = drift_mod.eval_models(self[self.val_indsB], null_adjusted=False)[0]
+        LLnullTR = drift_mod.eval_models(self[self.train_inds], null_adjusted=False)[0]
+        if verbose:
+            print( "  LLnull (valA) = %6.4f"%LLnull)
+            print( "  LLnull (valB) = %6.4f"%LLnullB) 
+            print( "  LLnull (trn)  = %6.4f"%LLnullTR)
+
+        drift = drift_mod.get_weights()
+        drift = drift-np.mean(drift)  
+        return {'valA': LLnull, 'valB': LLnullB, 'train': LLnullTR, 'drift_term': drift, 'drift_mod': drift_mod}

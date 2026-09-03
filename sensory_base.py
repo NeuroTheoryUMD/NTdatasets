@@ -200,7 +200,7 @@ class SensoryBase(Dataset):
                 self.Mval_out = deepcopy(self.Mval[:, cell_list])
     # END SensoryBase.set_cells()
 
-    def time_embedding( self, stim=None, nlags=None, verbose=True ):
+    def time_embedding( self, stim=None, nlags=None, verbose=True, flatten=True ):
         """
         Assume all stim dimensions are flattened into single dimension. 
         Will only act on self.stim if 'stim' argument is left None
@@ -241,7 +241,10 @@ class SensoryBase(Dataset):
 
         # Actual time-embedding itself
         tmp_stim = tmp_stim[np.arange(NT)[:,None]-np.arange(nlags), :]
-        tmp_stim = tmp_stim.permute((0,2,1)).reshape([NT, -1])
+        if flatten:
+            tmp_stim = tmp_stim.permute((0,2,1)).reshape([NT, -1])
+        else: 
+            tmp_stim = tmp_stim.permute((0,2,1))
         if verbose:
             print( "  Done.")
         return tmp_stim
@@ -280,6 +283,46 @@ class SensoryBase(Dataset):
                                      zero_right=zero_right, const_right=True),
             dtype=torch.float32)
     # END SensoryBase.construct_drift_design_matrix()
+
+    def generate_spike_history( self, robs=None, nlags=None, dt=1, doubling_time=None ):
+        """
+        Generate spike history term for the dataset given passed-in robs. This will automatically start at lag 1 
+        and go up to nlags (which does not include lag-0, so this means number of time points back). If doubling_time 
+        is set, then it will increase its step size by a factor of 2 every doubling_time time points.
+
+        Args:
+            robs: the firing rates to use
+            nlags: the number of lags to include in the spike history
+            dt: the initial time step
+            doubling_time: the doubling time for the spike history. If left none, it will not double
+
+        Returns:
+            Xspk_hist: the spike history design matrix, NT x (lags) x num_cells
+        """
+        if robs is None:
+            robs = deepcopy(self.robs.detach().cpu().numpy()).astype(np.float32)
+ 
+        # First make the lagged-spike history matrix using robs
+        Xspk_hist = self.time_embedding( stim=robs, nlags=nlags+1, flatten=False, verbose=False).permute([0,2,1])[:, 1:, :]
+        if (dt== 1) & (doubling_time is None):
+            return Xspk_hist
+        # Now make anchor points if lumping steps together
+        anchors = []
+        step_size = dt
+        pos, count = 0, 0
+        while pos < nlags:
+            pos += step_size
+            if pos < nlags:
+                anchors.append(pos)
+            count += 1
+            if count%doubling_time == 0:
+                step_size *= 2
+        if anchors[-1] < nlags:
+            anchors.append(nlags)
+        anchors = np.array(anchors, dtype=int)-1  # make sure last anchor is at last lag to make sure goes to zero
+        tent_convert = self.design_matrix_drift(nlags, anchors=anchors, const_left=False, zero_left=False, zero_right=True)
+        return np.einsum('TLC,LB->TBC',Xspk_hist, tent_convert)#.reshape([self.NT, -1])
+    # END SensoryBase.generate_spike_history()
 
     def trial_psths( self, trials=None, R=None, trial_size=None, ignore_dfs=True, verbose=False ):
         """

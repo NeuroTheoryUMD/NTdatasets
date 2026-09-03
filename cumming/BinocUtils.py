@@ -180,7 +180,7 @@ def disparity_matrix( dispt, corrt=None ):
     return dmat
 
 
-def disparity_tuning( data, r, cell_n=None, num_dlags=8, fr1or3=3, to_plot=False ):
+def disparity_tuning( dataset, r, cell_n=None, num_dlags=8, fr1or3=3, to_plot=False ):
     """
     Compute disparity tuning (disparity vs time) -- returned in dictionary object
     -> include cell_n to use data_filters from the actual cell
@@ -198,21 +198,21 @@ def disparity_tuning( data, r, cell_n=None, num_dlags=8, fr1or3=3, to_plot=False
     """
     import torch
 
-    dmat = disparity_matrix( data.dispt, data.corrt)
+    dmat = disparity_matrix( dataset.dispt, dataset.corrt)
     ND = (dmat.shape[1]-2) // 2
 
     # Weight all by their frequency of occurance    
     if (fr1or3 == 3) or (fr1or3 == 1):
-        inds = np.where(data.frs == fr1or3)[0]
+        inds = np.where(dataset.frs == fr1or3)[0]
     else:
-        inds = np.where(data.frs > 0)[0]
+        inds = np.where(dataset.frs > 0)[0]
 
     if isinstance(r, torch.Tensor):
         r = r.cpu().detach().numpy()
-    r = r.squeeze()
+    r0 = deepcopy(r).squeeze()
     
     if cell_n is not None:
-        resp = np.multiply( deepcopy(r), data.dfs[:, cell_n].detach().numpy())[inds]
+        resp = np.multiply( deepcopy(r0), dataset.dfs[:, cell_n].detach().numpy())[inds]
     else:
         resp = deepcopy(r[inds])
 
@@ -221,24 +221,22 @@ def disparity_tuning( data, r, cell_n=None, num_dlags=8, fr1or3=3, to_plot=False
 
     # if every stim resulted in 1 spk, the would be 1 as is
     #nrms = np.mean(dmat[used_inds[to_use],:], axis=0) # number of stimuli of each type
-    Xmat = utils.create_time_embedding( dmatN[:, range(ND*2)], num_dlags)[inds, :]
+    Xmat = dataset.time_embedding( dmatN[:, range(ND*2)], num_dlags, verbose=False).numpy()[inds, :]
     # uncorrelated response
-    Umat = utils.create_time_embedding( dmatN[:, [-2]], num_dlags)[inds, :]
-                          
+    Umat = dataset.time_embedding( dmatN[:, [-2]], num_dlags, verbose=False).numpy()[inds, :]
     #Nspks = np.sum(resp[to_use, :], axis=0)
     Nspks = np.sum(resp, axis=0)  # this will end up being number of spikes associated with each stim 
     # at different lags, divided by number of time points used. (i.e. prob of spike per bin)
 
     Dsta = np.reshape( Xmat.T@resp, [2*ND, num_dlags] ) / Nspks
     Usta = (Umat.T@resp)[:,0] / Nspks
-    
     # Rudimentary analysis
     best_lag = np.argmax(np.max(Dsta[range(ND),:], axis=0))
     Dtun = np.reshape(Dsta[:, best_lag], [2, ND]).T
     uncor_resp = Usta[best_lag]
-    
+
     Dinfo = {'Dsta':Dsta, 'Dtun': Dtun, 'uncor_resp': uncor_resp, 
-            'best_lag': best_lag, 'uncor_sta': Usta, 'disp_list': data.disp_list[2:]}
+            'best_lag': best_lag, 'uncor_sta': Usta, 'disp_list': dataset.disp_list[2:]}
 
     if to_plot:
         utils.subplot_setup(1,2, fig_width=10, row_height=2.8)
@@ -496,7 +494,8 @@ def disparity_predictions_drift(
     return dpred, tpred
 
 
-def binocular_model_performance( dataset=None, cell_n=0, Rpred=None, model=None, valset=None, verbose=True ):
+def binocular_model_performance(dataset=None, cell_n=0, Rpred=None, model=None, valset=None, verbose=True,
+                                downsample_strategy=None, full_output=False):
     """
     Current best-practices for generating prediction quality of neuron and binocular tuning. Currently we
     are not worried about using cross-validation indices only (as they are based on much less data and tend to
@@ -504,12 +503,13 @@ def binocular_model_performance( dataset=None, cell_n=0, Rpred=None, model=None,
     valset can be None (use all val_inds, 'a' or 'b': use subset)
     
     Args:
-        data: binocular dataset (NTdatasets.binocular.single)
+        dataset: binocular dataset (NTdatasets.binocular.single)
         cell_n: cell number (in python numbering, i.e. starting with 0)
         Rpred: predicted response of the model, or can pass in model if set to None
         model: model to use to generate predictions if Rpred is None
         valset: which validation set to use (None, 'a', 'b')
         verbose: whether to print out results
+        downsample_strategy: how to downsample model predictions (None=mean, otherwise by lag: numbered value)
 
     Returns:
         BMP: dictionary with all the information about the binocular model performance
@@ -517,12 +517,16 @@ def binocular_model_performance( dataset=None, cell_n=0, Rpred=None, model=None,
 
     assert dataset is not None, 'Need to include dataset'
     #assert cell_n is not None, 'Must specify cell to check'
+    cells_out_save = deepcopy(dataset.cells_out)
+    dataset.set_cells(verbose=False)
 
     if Rpred is None:
         assert model is not None, "Either Rpred or model must be specified"
         cells_out_save = deepcopy(dataset.cells_out)
         dataset.set_cells(cell_n)
         Rpred = model(dataset[:]).detach().cpu().numpy()
+    #elif isinstance(Rpred, torch.Tensor):  # torch not defined so just make sure not torch
+    #    Rpred = Rpred.cpu().detach().numpy()
     if len(Rpred.shape) == 1:
         Rpred = Rpred[:, None]
 
@@ -533,12 +537,18 @@ def binocular_model_performance( dataset=None, cell_n=0, Rpred=None, model=None,
             raise ValueError("Model prediction is longer than data, but no upsample factor found in data")
         assert len(Rpred)/dataset.upsample == NT, "Model prediction is longer than data, but upsample factor does not match"
         # Downsample model prediction if necessary
-        print('Downsampling data to frame resolution (upsample=%d)'%dataset.upsample)
-        r = Rpred[::dataset.upsample]
-        for ii in range(1, dataset.upsample):
-            r += Rpred[ii::dataset.upsample]
+        if downsample_strategy is None:
+            if verbose and full_output:
+                print('  Downsampling data to frame resolution (upsample=%d)'%dataset.upsample)
+            r = deepcopy(Rpred[::dataset.upsample])
+            for ii in range(1, dataset.upsample):
+                r += deepcopy(Rpred[ii::dataset.upsample])
+        else:
+            # Only use particular lag, but has to be multipled (since firing rate will be compared to all spikes)
+            assert downsample_strategy < dataset.upsample, "Downsample strategy must be less than upsample"
+            r = deepcopy(Rpred[downsample_strategy::dataset.upsample])*dataset.upsample
     else:
-        r = Rpred
+        r = deepcopy(Rpred)
 
     ## GENERAL COMPUTATIONS on data (cell-specific but not yet model-specific, using as much data as can)
     # make disparity predictions for all conditions
@@ -561,7 +571,7 @@ def binocular_model_performance( dataset=None, cell_n=0, Rpred=None, model=None,
     else:
         ev_valid = True
 
-    if verbose:
+    if verbose and full_output:
         print( "  Overall explainable variance fraction: %0.3f"%(ev/tv) )
 
     #### Model and data properties (not performance yet)
@@ -578,7 +588,7 @@ def binocular_model_performance( dataset=None, cell_n=0, Rpred=None, model=None,
     dv_pred3 = varDF(dmod3[indxs3]-tmod3[indxs3], df=df[indxs3])
     dv_pred1 = varDF(dmod1[indxs1]-tmod1[indxs1], df=df[indxs1])
     
-    if verbose:
+    if verbose and full_output:
         print( "  Obs disparity variance fraction (DVF): %0.3f (FR3: %0.3f)"%(dv_obs/ev, dv_obs3/ev3) )
     vars_obs = [tv, ev, dv_obs, ev-dv_obs ]  # total, explainable, disp_var, pattern_var
     vars_obs_FR3 = [tv3, ev3, dv_obs3, ev3-dv_obs3 ]  # total, explainable, disp_var, pattern_var
@@ -653,7 +663,7 @@ def binocular_model_performance( dataset=None, cell_n=0, Rpred=None, model=None,
     # Tuning curve consistency
     DtuningR2 = [1-np.mean(np.square(Dtun_obs[0]['Dtun']-Dtun_pred[0]['Dtun']))/np.var(Dtun_obs[0]['Dtun']),
                  1-np.mean(np.square(Dtun_obs[1]['Dtun']-Dtun_pred[1]['Dtun']))/np.var(Dtun_obs[1]['Dtun'])]
-    if verbose:
+    if verbose and full_output:
         print( "  Tuning consistency R2s: FR3 %0.3f  FR1 %0.3f"%(DtuningR2[0], DtuningR2[1]))
 
     BMP = {'EVfrac': ev/tv, 'EVvalid': ev_valid, 
@@ -662,7 +672,10 @@ def binocular_model_performance( dataset=None, cell_n=0, Rpred=None, model=None,
            'pred_powers': pps, 'disp_pred_powers': Dpps,
            'Dtun_obs': Dtun_obs, 'Dtun_pred': Dtun_pred, 'DtuningR2': DtuningR2}
     
+    if len(cells_out_save) > 0:
+        dataset.set_cells(cells_out_save)
     return BMP
+# END binocular_model_performance()
 
 
 ## Binocular model utilities
