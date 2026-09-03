@@ -1091,7 +1091,7 @@ def check_nan( mod0 ):
         for ll in range(len(mod0.networks[nn].layers)):
             w = mod0.networks[nn].layers[ll].weight.data.cpu().numpy()
             if np.any(np.isnan(w)):
-                mod0.networks[nn].layers[ll].weight.data[torch.isnan(mod0.networks[nn].layers[ll].weight.data)] = 0.0
+                mod0.networks[nn].layers[ll].weight.data[torch.isnan(mod0.networks[nn].layers[ll].weight.data)] = 1e-5
                 print("  WARNING: NaN weights in network %d layer %d"%(nn, ll))
                 return True
     return False
@@ -1144,10 +1144,11 @@ def center_model( mod0, include_binoc=False, verbose=True ):
     from NDNT.modules.layers import MaskConvLayer, BinocShiftLayer
 
     if check_nan(mod0):
-        print("  WARNING: NaN weights in model. Not centering.")
+        #print("  WARNING: NaN weights in model. Not centering.")
         return mod0
 
     ks0 = mod0.get_weights()
+    ks0[np.isnan(ks0)] = 1e-5
     NF = ks0.shape[-1]
     ks1 = deepcopy(ks0)
     for ii in range(NF):
