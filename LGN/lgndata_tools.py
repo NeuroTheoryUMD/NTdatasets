@@ -364,10 +364,13 @@ def _frames_per_rep(experiment_name: str, code: str | None, n_reps: int | None) 
     block structure). Expt3's `nr` code needs `n_reps` to disambiguate its
     long (5400, letters c/f, n_reps=24) vs short (600, letters d/e,
     n_reps=30) variants -- code alone doesn't distinguish them; returns
-    None for its 3 irregular penetrations (g32/h31/h32), whose n_reps
-    (256/28/28) match neither. Expt5 doesn't store `code` on repeat trials
-    at all (a known gap, see CLAUDE.md) -- its whole repeat family uses
-    600 uniformly regardless, so this doesn't need `code` for Expt5."""
+    None for the g32/h31/h32 penetrations this dataset no longer builds
+    (see CLAUDE.md). `nrshort_pooled` (2026-08) is the build-time-pooled
+    short-clip trial (long file's embedded sub-window + short file's own
+    reps, see build_dataset_expt3.py) -- always 600. Expt5 doesn't store
+    `code` on repeat trials at all (a known gap, see CLAUDE.md) -- its
+    whole repeat family uses 600 uniformly regardless, so this doesn't
+    need `code` for Expt5."""
     if experiment_name == "Expt1" and code == "ff":
         return 960
     if experiment_name == "Expt2":
@@ -383,6 +386,8 @@ def _frames_per_rep(experiment_name: str, code: str | None, n_reps: int | None) 
                 return 600
             return None
         if code == "wr":
+            return 600
+        if code == "nrshort_pooled":  # build-time-pooled short-clip repeat, see build_dataset_expt3.py
             return 600
     if experiment_name == "Expt4":
         if code in ("wr", "nr"):
@@ -705,10 +710,18 @@ def load_repeat_trial(experiment_number: int, penetration_number: int, trial_key
     storage schemas it uses (see `classify_repeat_shape`'s docstring).
 
     Returns `{'shape', 'per_unit': [...], 'unit_names', 'stim', 'stim_ref',
-    'xy_class', 'xy_class_source', 'xy_class_log_f2f1', 'modality', 'code',
-    'contrast', 'contrast_rms', 'regime', 'notes'}`, where `per_unit[i]` =
-    `{'spk_times': [rep0_array, rep1_array, ...], 'contrast_per_rep',
-    'rep_durations', 'valid_rep'}`.
+    'dt', 'xy_class', 'xy_class_source', 'xy_class_log_f2f1', 'modality',
+    'code', 'contrast', 'contrast_rms', 'regime', 'notes'}`, where
+    `per_unit[i]` = `{'spk_times': [rep0_array, rep1_array, ...],
+    'contrast_per_rep', 'rep_durations', 'valid_rep'}`.
+
+    `dt` (2026-08): repeat trials carry no `frame_times` array (unlike
+    unique trials), so this is the only place to recover the stimulus
+    frame period -- the real mean per-rep duration (`rep_durations`, from
+    actual trigger timestamps) divided by this trial's known frames/rep
+    (`_frames_per_rep`, the same validated table `build_cell_trial_table`'s
+    `frames_per_rep` column uses). `None` only if frames/rep isn't known
+    for this trial's (experiment, code, n_reps) combination.
 
     For `'flat'`-shape trials, `trig_per_rep` is required to reconstruct
     repeat boundaries -- auto-looked-up from `_FLAT_TRIG_PER_REP` by
@@ -739,15 +752,20 @@ def load_repeat_trial(experiment_number: int, penetration_number: int, trial_key
                 "spk_times": u["spk_times"],
                 "contrast_per_rep": list(u["contrast_per_rep"]),
                 "rep_durations": list(u["rep_durations"]),
-                "valid_rep": list(u.get("valid_rep", [True] * u["n_reps"])),
+                "valid_rep": list(u["valid_rep"]) if u.get("valid_rep") is not None else [True] * len(u["spk_times"]),
             }
             for u in t["per_unit"]
         ]
     elif shape == "trial_level":
         contrast = list(t["contrast_per_rep"])
         durations = list(t["rep_durations"])
+        # valid_rep (2026-08): False for discarded warm-up reps (Expt5's
+        # SBN/NAT wr/nr, 32-block/skip-first convention) -- falls back to
+        # all-True for trial types that never had this (Expt5's fff, 16-block/
+        # no-skip, unaffected by that fix).
+        valid = list(t["valid_rep"]) if t.get("valid_rep") is not None else [True] * len(contrast)
         per_unit = [
-            {"spk_times": unit_reps, "contrast_per_rep": contrast, "rep_durations": durations, "valid_rep": [True] * len(contrast)}
+            {"spk_times": unit_reps, "contrast_per_rep": contrast, "rep_durations": durations, "valid_rep": valid}
             for unit_reps in t["spk_times"]
         ]
     else:  # flat
@@ -781,12 +799,32 @@ def load_repeat_trial(experiment_number: int, penetration_number: int, trial_key
         if owns_lib:
             lib.close()
 
+    # dt (2026-08): repeat trials carry no frame_times array at all (unlike
+    # unique trials), so there was previously no way to recover even the
+    # nominal stimulus frame period from load_repeat_trial's own output.
+    # frames_per_rep is already known at build time (trig_per_rep for 'flat'
+    # trials, or looked up via _frames_per_rep for 'per_unit'/'trial_level'
+    # trials, same validated table build_cell_trial_table's own frames_per_rep
+    # column uses) -- dt is the real mean per-rep duration (from actual
+    # trigger timestamps, already stored in rep_durations) divided by that,
+    # i.e. this trial's own measured frame period, not a hardcoded constant
+    # (though it should and does land close to the project-wide ~0.016678s
+    # value everywhere this has been checked).
+    frames_per_rep = trig_per_rep if shape == "flat" else _frames_per_rep(experiment, t.get("code"), t.get("n_reps"))
+    dt = None
+    if frames_per_rep:
+        for u in per_unit:
+            if u["rep_durations"]:
+                dt = float(np.mean(u["rep_durations"])) / frames_per_rep
+                break
+
     return {
         "shape": shape,
         "per_unit": per_unit,
         "unit_names": [u["name"] for u in ds["units"]],
         "stim": stim,
         "stim_ref": t.get("stim_ref"),
+        "dt": dt,
         "xy_class": [u.get("xy_class") for u in ds["units"]],
         "xy_class_source": [u.get("xy_class_source") for u in ds["units"]],
         "xy_class_log_f2f1": [u.get("xy_class_log_f2f1") for u in ds["units"]],
@@ -806,7 +844,9 @@ def load_repeat_cell(experiment_number: int, penetration_number: int, cell_numbe
     """Same as `load_repeat_trial` but pre-sliced to one cell -- mirrors
     `load_cell()`'s relationship to `load_trial()`. `trial_key` normally
     comes straight from a `find_cells(regime='repeat', experiment_number=...,
-    penetration_number=..., cell_number=...)` row."""
+    penetration_number=..., cell_number=...)` row. Includes `dt` (see
+    `load_repeat_trial`'s docstring) -- the stimulus frame period, since
+    repeat trials otherwise carry no timing info beyond `rep_durations`."""
     trial = load_repeat_trial(experiment_number, penetration_number, trial_key, trig_per_rep=trig_per_rep,
                                block_size=block_size, skip_first_of_block=skip_first_of_block, lib=lib, root=root)
     u = trial["per_unit"][cell_number]
@@ -818,6 +858,7 @@ def load_repeat_cell(experiment_number: int, penetration_number: int, cell_numbe
         "cell_name": trial["unit_names"][cell_number],
         "stim": trial["stim"],
         "stim_ref": trial["stim_ref"],
+        "dt": trial["dt"],
         "xy_class": trial["xy_class"][cell_number],
         "xy_class_source": trial["xy_class_source"][cell_number],
         "xy_class_log_f2f1": trial["xy_class_log_f2f1"][cell_number],
