@@ -400,7 +400,7 @@ def sico_reg_path(
     LLprev = LLsRx[bestXr]
     del sico_iter
     torch.cuda.empty_cache()
-    mod0 = deepcopy(mods[bestr]).to(torch.device('cpu'))
+    mod0 = deepcopy(mods[bestXr]).to(torch.device('cpu'))
     
     print('  Chosen d2xt =', utils.string_convert(XTreg), '(%d)'%bestXr)
 
@@ -479,21 +479,20 @@ def sico_reg_path(
     print('  Chosen glocalx = ', utils.string_convert(Greg), '(%d)'%bestGr, '\n')
 
     if to_plot:
-        utils.subplot_setup( 1, 2, row_height=3, fig_width=10)
+        utils.subplot_setup( 1, 2, row_height=3, fig_width=8)
         plt.subplot(1,2,1)
         plt.plot(LLsRx,'b')
         plt.plot(LLsRx,'bo')
         plt.axhline(np.nanmax(LLsRx)*thresh, color='k', linestyle='--')
+        plt.axvline(bestXr, color='c')
 
         plt.subplot(1,2,2)
         plt.plot(LLsRg,'g')
         plt.plot(LLsRg,'go')
         plt.axhline(np.nanmax(LLsRg)*thresh, color='k', linestyle='--')
-        plt.axvline(bestGr, color='k')
+        plt.axvline(bestGr, color='c')
         plt.show()
 
-
-    if to_plot:
         if not sample_layer:
             mod2.plot_filters()
             plot_conv_layer(mod2)
@@ -902,7 +901,7 @@ def produce_best_sampler_model(
         elif NI-NI0 == 1:
             addEorI = 1
         else:
-            raise ValueError("reuse_top model does not match NE, NI")
+            raise ValueError("reuse_top model (%d %d) does not match path (%d %d)"%(NE0, NI0, NE, NI))
 
     #print('NE, NI = %d, %d'%(NE, NI))
     mods = []
