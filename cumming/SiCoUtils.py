@@ -69,10 +69,9 @@ def sico_path(ds_trn, ds_val, LLn_trn=0, LLn_val=0, drift_term=None,
     LR = ocular_dominance( ds_trn, verbose=False )
     #Rvals = [1e-6, 1e-4, 0.001, 0.01, 0.1, 1, 10]
 
-    NE, NI = 2, 2
     # d2xt Reg path for beginner model all the way through
     if (XTreg is None) or (Greg is None):
-        regs = sico_reg_path(ds_trn, ds_val, NE=1, NI=1, thresh=0.95, XTreg0=XTreg, Greg0=Greg, sample_layer=sample_layer,
+        regs = sico_reg_path(ds_trn, ds_val, NE=2, NI=2, thresh=0.95, XTreg0=XTreg, Greg0=Greg, sample_layer=sample_layer,
                              time_covariates=time_covariates, XTcoupled=XTcoupled, logXTmult=logXTmult, nlags=nlags,
                              LLn=LLn_val, drift_term=drift_term, device=device, to_plot=True )
         XTreg = regs['XTreg']
@@ -439,6 +438,7 @@ def sico_reg_path(
     # Center and refine model, and then pick best Greg
     if sample_layer:
         mod1 = center_model( mod1, include_binoc=True ).to(device)
+        mod1.networks[0].layers[1].fit_shifts(val=True, fixed_sigmas=True, sigma0 = 0.9) # make sure sigmas not too big
         utils.fit_lbfgs( mod1, ds_trn[:], verbose=0, max_iter=2000, line_search=ln_search)
     else:
         mod1 = refine_binocular(center_model(mod1, include_binoc=False), ds_trn, #ds_val, LLnull=LLn, 
@@ -528,7 +528,7 @@ def produce_best_model(
         elif NI-NI0 == 1:
             addEorI = 1
         else:
-            raise ValueError("reuse_top model does not match NE, NI")
+            raise ValueError("reuse_top model (%d %d) does not match path (%d %d)"%(NE0, NI0, NE, NI))
 
     #print('NE, NI = %d, %d'%(NE, NI))
     mods = []
@@ -572,6 +572,7 @@ def produce_best_model(
     else:
         return best_mod
 # END produce_best_model()
+
 
 def extend_binocular_model( mod0, addEorI=0, LorR=0, seed=101, top_subunits=False, ds_trn=None ):
     """
