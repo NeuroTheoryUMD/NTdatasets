@@ -473,6 +473,10 @@ def sico_reg_path(
 
     #bestr = np.argmax(LLsRg)
     # overwrite bestr with (compromise) threshold that is very close to max LL but not necessarily the max (to avoid overfitting)
+    try:
+        bestGr = np.where(LLsRg > (np.nanmax(LLsRg)*Gthresh))[0][-1]
+    except IndexError:
+        bestGr = np.nanargmax(LLsRg)
     bestGr = np.where(LLsRg > (np.max(LLsRg)*Gthresh))[0][-1]
     Greg = Rvals[bestGr]
     mod2 = mods[bestGr].to(torch.device('cpu'))
