@@ -12,7 +12,9 @@ from NTdatasets.sensory_base import SensoryBase
 
 class binocular_singleT(SensoryBase):
 
-    def __init__(self, expt_num=None, time_embed=0, num_lags=12, skip_lags=0, drift_interval=None, verbose=True, **kwargs):
+    def __init__(
+        self, expt_num=None, time_embed=0, num_lags=12, skip_lags=0, drift_interval=None, anchor_drift=True,
+        verbose=True, **kwargs):
         """
         Args: 
             expt_num: the experiment index
@@ -20,6 +22,7 @@ class binocular_singleT(SensoryBase):
             num_lags: the number of lags to use in time-embedding
             skip_lags: shift stim to throw out early lags
             drift_interval: the interval that the drift anchors are spaced
+            anchor_drift: whether to anchor the drift to zero on the right side (True) or floating (False)
             filename: currently the pre-processed matlab file from Dan's old-style format
             **kwargs: non-dataset specific arguments that get passed into SensoryBase
 
@@ -152,7 +155,7 @@ class binocular_singleT(SensoryBase):
             # len(dFT), dFT[:10]  # every 3 seconds (likely trial time)
             anchors = np.arange(0, self.NT, drift_interval)
             drift_tents = self.design_matrix_drift(
-                self.NT, anchors, zero_left=False, zero_right=True, const_right=False)
+                self.NT, anchors, zero_left=False, zero_right=anchor_drift, const_right=(not anchor_drift))
             self.Xdrift = torch.tensor(drift_tents, dtype=torch.float32)
         else:
             self.Xdrift = None

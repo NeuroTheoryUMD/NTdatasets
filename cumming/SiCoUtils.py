@@ -9,7 +9,7 @@ import matplotlib.pyplot as plt
 from NTdatasets.cumming.BinocUtils import plot_sico_readout
 
 ############## SiCo Fitting Pathways ##############
-def sico_path(ds_trn, ds_val, LLn_trn=0, LLn_val=0, drift_term=None,
+def sico_path(ds_trn, ds_val, LLn_trn=0, LLn_val=0, drift_term=None, num_anchors=0,
               XTreg=None, Greg=None, XTcoupled=False, logXTmult=0, sample_layer=True, reuse_best=False,
               n_iter=8, time_covariates=True, device=None,
               save_dir=None, expt_n=None, cell_n=None, id=None):
@@ -37,10 +37,11 @@ def sico_path(ds_trn, ds_val, LLn_trn=0, LLn_val=0, drift_term=None,
         reuse_best: if True, reuse the top 25% of subunits from best model from the previous iteration 
             on the quarter of iterations (default=False)
     """
-    assert drift_term is not None, "Need to enter 'drift_term'"
+    if num_anchors == 0:
+        assert drift_term is not None, "Need to enter 'drift_term'"
     nlags = ds_trn[0]['stim'].shape[-1]//72
     print("  Detected num lags = %d"%nlags)
-
+    
     # Make temporary save models: can index by experiment/cell_n (if expt_n, cell_n is entered) or not
     save_name = "sico"
     if expt_n is not None:
@@ -71,9 +72,12 @@ def sico_path(ds_trn, ds_val, LLn_trn=0, LLn_val=0, drift_term=None,
 
     # d2xt Reg path for beginner model all the way through
     if (XTreg is None) or (Greg is None):
+        #regs = sico_reg_path(ds_trn, ds_val, NE=2, NI=2, thresh=0.95, XTreg0=XTreg, Greg0=Greg, sample_layer=sample_layer,
+        #                     time_covariates=time_covariates, XTcoupled=XTcoupled, logXTmult=logXTmult, nlags=nlags,
+        #                     LLn=LLn_val, drift_term=drift_term, device=device, to_plot=True )
         regs = sico_reg_path(ds_trn, ds_val, NE=2, NI=2, thresh=0.95, XTreg0=XTreg, Greg0=Greg, sample_layer=sample_layer,
                              time_covariates=time_covariates, XTcoupled=XTcoupled, logXTmult=logXTmult, nlags=nlags,
-                             LLn=LLn_val, drift_term=drift_term, device=device, to_plot=True )
+                             LLn=LLn_val, num_anchors=num_anchors, device=device, to_plot=True )
         XTreg = regs['XTreg']
         Greg = regs['Greg']
         logXTmult = regs['logXTmult']
@@ -82,8 +86,11 @@ def sico_path(ds_trn, ds_val, LLn_trn=0, LLn_val=0, drift_term=None,
     # Find best model for 1-1 over n_iters
     print('NE, NI = %d, %d'%(NE, NI))
     if sample_layer:
+        #mod_path = [produce_best_sampler_model(
+        #    ds_trn, ds_val, drift_term, LR, XTreg, logXTmult, Greg, NE=1, NI=1, time_covariates=time_covariates,
+        #    n_iter=n_iter, nlags=nlags, LLn_trn=LLn_trn, LLn_val=LLn_val, device=device, to_plot=True)]
         mod_path = [produce_best_sampler_model(
-            ds_trn, ds_val, drift_term, LR, XTreg, logXTmult, Greg, NE=1, NI=1, time_covariates=time_covariates,
+            ds_trn, ds_val, num_anchors, LR, XTreg, logXTmult, Greg, NE=1, NI=1, time_covariates=time_covariates,
             n_iter=n_iter, nlags=nlags, LLn_trn=LLn_trn, LLn_val=LLn_val, device=device, to_plot=True)]
     else:
         mod_path = [produce_best_model(
@@ -94,11 +101,25 @@ def sico_path(ds_trn, ds_val, LLn_trn=0, LLn_val=0, drift_term=None,
     #print("1-1: LL = %0.5f"%LLprev)
     mod_path[0].save_model(save_name+"1_1.ndn")
     
-    no_stop=True
-    iter = 0 # number of adds to E and/or I
-    reuse_top = None
+    # Drift check
+    utils.ss(1,2, rh=2.5)
+    plt.subplot(1,2,1)
+    plt.plot(mod_path[0].networks[-1].layers[0].drift.data.detach().cpu().numpy())
+    plt.title('Drift term')
+    plt.subplot(1,2,2)
+    plt.plot(mod_path[0].networks[-1].layers[0].beta.data.detach().cpu().numpy())
+    plt.title('Betas')
+    plt.show()
 
-    while no_stop and (iter < 6):
+    #no_stop=True
+    continue_exc, continue_inh = True, True
+    iter = 0 # number of adds to E and/or I
+    if reuse_best:
+        reuse_top = deepcopy(mod_path[-1])
+    else:
+        reuse_top = None
+
+    while (continue_exc or continue_inh) and (iter < 6):
         no_stop = False
 
         # Check best regularization on previous model (from last iteration)
@@ -114,18 +135,15 @@ def sico_path(ds_trn, ds_val, LLn_trn=0, LLn_val=0, drift_term=None,
         #    prev_mod = regs['model']
         #    LLprev = LLn_val - prev_mod.eval_models(ds_val[:], null_adjusted=False)[0]
 
-        if reuse_best:
-            reuse_top = mod_path[-1]
-
         # plus one excitation
         NE += 1
         print('NE, NI = %d, %d'%(NE, NI))
 
         if sample_layer:
-            sicoE1 = produce_best_sampler_model(ds_trn, ds_val, drift_term, LR, XTreg, logXTmult, Greg, NE=NE, NI=NI, time_covariates=time_covariates,
+            #sicoE1 = produce_best_sampler_model(ds_trn, ds_val, drift_term, LR, XTreg, logXTmult, Greg, NE=NE, NI=NI, time_covariates=time_covariates,
+            #                                    n_iter=n_iter, nlags=nlags, LLn_trn=LLn_trn, LLn_val=LLn_val, device=device, to_plot=False, reuse_top=reuse_top)
+            sicoE1 = produce_best_sampler_model(ds_trn, ds_val, num_anchors, LR, XTreg, logXTmult, Greg, NE=NE, NI=NI, time_covariates=time_covariates,
                                                 n_iter=n_iter, nlags=nlags, LLn_trn=LLn_trn, LLn_val=LLn_val, device=device, to_plot=False, reuse_top=reuse_top)
-            #sicoE1 = produce_best_sampler_model(ds_trn, ds_val, model=mod_path[-1], LR=LR, addEorI=0, time_covariates=time_covariates,
-            #                                     n_iter=n_iter, LLn_trn=LLn_trn, LLn_val=LLn_val, device=device, to_plot=False)
         else:
             sicoE1 = produce_best_model(ds_trn, ds_val, drift_term, LR, XTreg, logXTmult, Greg, NE=NE, NI=NI, 
                                         time_covariates=time_covariates, nlags=nlags, n_iter=n_iter, LLn_trn=LLn_trn, LLn_val=LLn_val, device=device,
@@ -133,10 +151,11 @@ def sico_path(ds_trn, ds_val, LLn_trn=0, LLn_val=0, drift_term=None,
             
         LL = LLn_val - sicoE1.eval_models(ds_val[:], null_adjusted=False)[0]
         if LL > LLprev:
-            no_stop = True
+            continue_exc, continue_inh = True, True
             LLprev = LL
             mod_path.append(deepcopy(sicoE1.cpu()))
-
+            if reuse_best:
+                reuse_top = deepcopy(sicoE1.cpu())
             # Plot model here
             print("Keeping (%d,%d): %0.5f"%(NE, NI, LL))
             if sample_layer:
@@ -149,41 +168,43 @@ def sico_path(ds_trn, ds_val, LLn_trn=0, LLn_val=0, drift_term=None,
         else:
             print("EXC+1 (%d,%d) no good: %0.5f < %0.5f\n"%(NE, NI, LL, LLprev))
             NE += -1
-
-        if reuse_best:
-            reuse_top = mod_path[-1]
+            continue_exc = False
 
         # plus one inhibition
-        NI += 1
-        print('NE, NI = %d, %d'%(NE, NI))
-        if sample_layer:
-            sicoI1 = produce_best_sampler_model(ds_trn, ds_val, drift_term, LR, XTreg, logXTmult, Greg, NE=NE, NI=NI, time_covariates=time_covariates,
-                                                reuse_top=reuse_top, n_iter=n_iter, nlags=nlags, LLn_trn=LLn_trn, LLn_val=LLn_val, device=device, to_plot=False)
-            #sicoI1 = produce_best_sampler_model2(ds_trn, ds_val, model=mod_path[-1], LR=LR, addEorI=1, time_covariates=time_covariates,
-            #                                     n_iter=n_iter, LLn_trn=LLn_trn, LLn_val=LLn_val, device=device, to_plot=False)
-        else:
-            sicoI1 = produce_best_model(ds_trn, ds_val, drift_term, LR, XTreg, logXTmult, Greg, NE=NE, NI=NI, 
-                                        time_covariates=time_covariates, nlags=nlags, n_iter=n_iter, LLn_trn=LLn_trn, LLn_val=LLn_val, device=device,
-                                        reuse_top=reuse_top, to_plot=False)
-            
-        LL = LLn_val - sicoI1.eval_models(ds_val[:], null_adjusted=False)[0]
-        if LL > LLprev:
-            no_stop = True
-            LLprev = LL
-            mod_path.append(deepcopy(sicoI1.cpu()))
-
-            # Plot model here
-            print("Keeping (%d,%d): %0.5f"%(NE, NI, LL))
+        if continue_inh:
+            NI += 1
+            print('NE, NI = %d, %d'%(NE, NI))
             if sample_layer:
-                display_sampler_model(sicoI1) 
+                sicoI1 = produce_best_sampler_model(ds_trn, ds_val, num_anchors, LR, XTreg, logXTmult, Greg, NE=NE, NI=NI, time_covariates=time_covariates,
+                                                    reuse_top=reuse_top, n_iter=n_iter, nlags=nlags, LLn_trn=LLn_trn, LLn_val=LLn_val, device=device, to_plot=False)
+                #sicoI1 = produce_best_sampler_model(ds_trn, ds_val, drift_term, LR, XTreg, logXTmult, Greg, NE=NE, NI=NI, time_covariates=time_covariates,
+                #                                    reuse_top=reuse_top, n_iter=n_iter, nlags=nlags, LLn_trn=LLn_trn, LLn_val=LLn_val, device=device, to_plot=False)
             else:
-                sicoI1.plot_filters()
-                plot_conv_layer(sicoI1)
-                plot_sico_readout(sicoI1)
-            sicoI1.save_model(save_name+"%d_%d.ndn"%(NE, NI))
-        else:
-            print("INH+1 (%d,%d) no good: %0.5f < %0.5f\n"%(NE, NI, LL, LLprev))
-            NI += -1
+                sicoI1 = produce_best_model(ds_trn, ds_val, drift_term, LR, XTreg, logXTmult, Greg, NE=NE, NI=NI, 
+                                            time_covariates=time_covariates, nlags=nlags, n_iter=n_iter, LLn_trn=LLn_trn, LLn_val=LLn_val, device=device,
+                                            reuse_top=reuse_top, to_plot=False)
+                
+            LL = LLn_val - sicoI1.eval_models(ds_val[:], null_adjusted=False)[0]
+            if LL > LLprev:
+                continue_exc, continue_inh = True, True
+                LLprev = LL
+                mod_path.append(deepcopy(sicoI1.cpu()))
+                if reuse_best:
+                    reuse_top = deepcopy(sicoI1.cpu())
+
+                # Plot model here
+                print("Keeping (%d,%d): %0.5f"%(NE, NI, LL))
+                if sample_layer:
+                    display_sampler_model(sicoI1) 
+                else:
+                    sicoI1.plot_filters()
+                    plot_conv_layer(sicoI1)
+                    plot_sico_readout(sicoI1)
+                sicoI1.save_model(save_name+"%d_%d.ndn"%(NE, NI))
+            else:
+                print("INH+1 (%d,%d) no good: %0.5f < %0.5f\n"%(NE, NI, LL, LLprev))
+                NI += -1
+                continue_inh = False
 
         iter += 1
 
@@ -345,22 +366,26 @@ def sico_path_parallel(ds_trn, ds_val, LLn_trn=0, LLn_val=0, drift_term=None,
 
 def sico_reg_path(
     ds_trn, ds_val, NE=2, NI=2, XTreg0=None, logXTmult=0, XTcoupled=True, Greg0=None, 
-    thresh=0.95, Gthresh=None, sample_layer=True, 
+    thresh=0.95, Gthresh=None, sample_layer=True, num_anchors=0,
     nlags=None, time_covariates=0, LLn=0, drift_term=None, to_plot=True, device=None ):
     """reg0 is if want centered -- test order of mag in each direction"""
-    assert drift_term is not None, "Need to enter 'drift_term'"
+    if num_anchors == 0:
+        assert drift_term is not None, "Need to enter 'drift_term'"
+
+    # Figure out average firing rate for scaling softplus layer (if entered)
+    avrate = (torch.sum(ds_trn[:]['robs']*ds_trn[:]['dfs'],axis=0)/torch.sum(ds_trn[:]['dfs'],axis=0)).detach().cpu().numpy()
 
     if device is None:
         device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
         print("  Regpath WARNING: device not entered, using device:", device)
     device0 = torch.device("cpu") # for storing models on CPU
+
     if Gthresh is None:
         Gthresh = thresh
-
-    if sample_layer:
-        ln_search = None
-    else:
-        ln_search = 'strong_wolfe'
+    #if sample_layer:
+    #    ln_search = None
+    #else:
+    ln_search = 'strong_wolfe'
 
     if nlags is None:
         nlags = 12
@@ -380,9 +405,12 @@ def sico_reg_path(
     mods = []
     print('  Initial XT-regpath:', utils.string_convert(Rvals) )
     for ii in range(len(Rvals)): # same seed
-        sico_iter = baseline_sico(NE, NI, LorR=LR, seed=101, XTreg=Rvals[ii], logXTmult=logXTmult, nlags=nlags,
-                                  sample_layer=sample_layer,
-                                  drift_term=drift_term, time_covariates=time_covariates).to(device)
+        #sico_iter = baseline_sico(NE, NI, LorR=LR, seed=101, XTreg=Rvals[ii], logXTmult=logXTmult, nlags=nlags,
+        #                          sample_layer=sample_layer,
+        #                          drift_term=drift_term, time_covariates=time_covariates).to(device)
+        sico_iter = baseline_sico2(NE, NI, LorR=LR, seed=101, XTreg=Rvals[ii], logXTmult=logXTmult, nlags=nlags,
+                                  sample_layer=sample_layer, target_rate=avrate,
+                                  num_anchors=num_anchors, time_covariates=time_covariates).to(device)
         utils.fit_lbfgs( sico_iter, ds_trn[:], verbose=0, max_iter=2000, line_search=ln_search)
         LL = LLn - sico_iter.eval_models(ds_val[:], null_adjusted=False)[0]
         mods.append(deepcopy(sico_iter))  # this will still be on GPU
@@ -414,9 +442,13 @@ def sico_reg_path(
         #LLs = np.zeros(len(log_mult_list))
         mod1 = deepcopy(mod0)
         for ii, log_mult in enumerate(log_mult_list): 
-            sico_iter = baseline_sico(NE, NI, LorR=LR, seed=101, XTreg=XTreg, logXTmult=log_mult, nlags=nlags, 
-                                      sample_layer=sample_layer,
-                                      time_covariates=time_covariates, drift_term=drift_term).to(device) 
+            #sico_iter = baseline_sico(NE, NI, LorR=LR, seed=101, XTreg=XTreg, logXTmult=log_mult, nlags=nlags, 
+            #                          sample_layer=sample_layer,
+            #                          time_covariates=time_covariates, drift_term=drift_term).to(device) 
+            sico_iter = baseline_sico2(NE, NI, LorR=LR, seed=101, XTreg=XTreg, logXTmult=log_mult, nlags=nlags, 
+                                      sample_layer=sample_layer, target_rate=avrate,
+                                      time_covariates=time_covariates, num_anchors=num_anchors).to(device) 
+
             utils.fit_lbfgs( sico_iter, ds_trn[:], verbose=0, max_iter=2000, line_search=ln_search)
             #LLs[ii] = LLn - sico_iter.eval_models(ds_val[:], null_adjusted=False)[0]
             LL = LLn - sico_iter.eval_models(ds_val[:], null_adjusted=False)[0]
@@ -637,13 +669,23 @@ def extend_binocular_model( mod0, addEorI=0, LorR=0, seed=101, top_subunits=Fals
     else:
         XTreg = None
 
-    mod1 = baseline_sico(NE, NI, LorR=LorR, seed=seed, 
+    #mod1 = baseline_sico(NE, NI, LorR=LorR, seed=seed, 
+    #                     XTreg=XTreg, Greg=mod0.networks[0].layers[2].reg.vals['glocalx'],
+    #                     logXTmult=logXTmult,
+    #                     nlags=mod0.networks[0].layers[0].filter_dims[-1],
+    #                     sample_layer=sample_layer,
+    #                     drift_term=mod0.networks[1].layers[0].weight.data.cpu().numpy(),
+    #                     time_covariates=False).to(mod0.device)
+    mod1 = baseline_sico2(NE, NI, LorR=LorR, seed=seed, 
                          XTreg=XTreg, Greg=mod0.networks[0].layers[2].reg.vals['glocalx'],
                          logXTmult=logXTmult,
                          nlags=mod0.networks[0].layers[0].filter_dims[-1],
-                         sample_layer=sample_layer,
-                         drift_term=mod0.networks[1].layers[0].weight.data.cpu().numpy(),
+                         sample_layer=sample_layer, 
+                         num_anchors=mod0.networks[1].layers[0].beta.data.shape[0],
                          time_covariates=False).to(mod0.device)
+    mod1.networks[-1].layers[0].weight.data = mod0.networks[-1].layers[0].weight.data.clone()
+        # Figure out average firing rate for scaling softplus layer (if entered)
+
 
     # Copy model parameters appropriately
     weight_mapping = np.concatenate( (np.arange(NE0), np.arange(NE, NE+NI0)) )[keep_list]
@@ -704,11 +746,17 @@ def prune_binocular_model( mod0, subunit_n=None ):
     else:
         d2xt = None
 
-    mod1 = baseline_sico(NE, NI, LorR=LorR, nlags=mod0.networks[0].layers[0].filter_dims[-1],
+    #mod1 = baseline_sico(NE, NI, LorR=LorR, nlags=mod0.networks[0].layers[0].filter_dims[-1],
+    #                     XTreg=d2xt, Greg=mod0.networks[0].layers[2].reg.vals['glocalx'], logXTmult=logXTmult,
+    #                     sample_layer=sample_layer,
+    #                     drift_term=mod0.networks[1].layers[0].weight.data.cpu().numpy(),
+    #                     time_covariates=time_cov)
+    mod1 = baseline_sico2(NE, NI, LorR=LorR, nlags=mod0.networks[0].layers[0].filter_dims[-1],
                          XTreg=d2xt, Greg=mod0.networks[0].layers[2].reg.vals['glocalx'], logXTmult=logXTmult,
                          sample_layer=sample_layer,
-                         drift_term=mod0.networks[1].layers[0].weight.data.cpu().numpy(),
+                         num_anchors=mod0.networks[1].layers[0].beta.shape[0],
                          time_covariates=time_cov)
+    mod1.networks[-1].layers[0].weight.data = mod0.networks[-1].layers[0].weight.data.clone()
 
     # Copy model parameters appropriately
     weight_mapping = np.array(list(set(np.arange(NE0+NI0)) - set([subunit_n])), dtype=int)
@@ -884,7 +932,10 @@ def increment_models(ds_trn, ds_val, modlist=None, addEorI=0, cull_list=True):
 
 
 def produce_best_sampler_model( 
-    ds_trn, ds_val, drift, LorR, XTreg, logXTmult, Greg, NE=2, NI=2, n_iter=8, LLn_trn=0, LLn_val=0, nlags=None,
+    ds_trn, ds_val, 
+    #drift,
+    num_anchors, 
+    LorR, XTreg, logXTmult, Greg, NE=2, NI=2, n_iter=8, LLn_trn=0, LLn_val=0, nlags=None,
     time_covariates=0, device=None, save_models=False, to_plot=True, reuse_top=None ):
     """
     This implements a simple model selection procedure where we fit n_iter models 
@@ -920,9 +971,12 @@ def produce_best_sampler_model(
             sico_iter = extend_binocular_model(reuse_top, addEorI=addEorI, seed=101+ii, top_subunits=True, ds_trn=ds_trn).to(device) 
             sico_iter.networks[0].layers[2].reg.vals['glocalx'] = Greg
         else:
-            sico_iter = baseline_sico(NE,NI, LorR=LorR, seed=101+ii, bi_bias=True, nlags=nlags, time_covariates=time_covariates,
+            #sico_iter = baseline_sico(NE,NI, LorR=LorR, seed=101+ii, bi_bias=True, nlags=nlags, time_covariates=time_covariates,
+            #                        sample_layer=True, shift_start=running_shifts,
+            #                        XTreg=XTreg, logXTmult=logXTmult, Greg=Greg/10, drift_term=drift ).to(device)
+            sico_iter = baseline_sico2(NE,NI, LorR=LorR, seed=101+ii, bi_bias=True, nlags=nlags, time_covariates=time_covariates,
                                     sample_layer=True, shift_start=running_shifts,
-                                    XTreg=XTreg, logXTmult=logXTmult, Greg=Greg/10, drift_term=drift ).to(device)
+                                    XTreg=XTreg, logXTmult=logXTmult, Greg=Greg/10, num_anchors=num_anchors ).to(device)
         #sico_iter.list_parameters()
         utils.fit_lbfgs( sico_iter, ds_trn[:], verbose=0, max_iter=2000, line_search=None)  # this seems fragile w Strong-Wolfe
         # Centers and refits
@@ -1109,6 +1163,216 @@ def baseline_sico(NE, NI, LorR=0, seed=100, XTreg=0.01, logXTmult=0, Greg=0.001,
     
     return sico
 # END baseline_sico()
+
+
+def baseline_sico2(NE, NI, LorR=0, seed=100, XTreg=0.01, logXTmult=0, Greg=0.001, Dreg=0.001, nlags=None,
+                  sample_layer=True, shift_start=0, bi_bias=True,
+                  num_anchors=0, time_covariates=0, target_rate=None ):
+    """
+    We are taking in passing in the drift terms away. and let if fit both drift and beta-drift terms, with an overall
+    firing rate adjustment to alphas off the bat. 
+    logXTmult=0 means that d2x and d2t are the same, so use d2xt, otherwise separately define them based on factor of 10
+    """
+    from NDNT.NDN import NDN
+    from NDNT.networks import FFnetwork, SoftplusNetwork
+    from NDNT.modules.layers import NDNLayer, ConvLayer, MaskConvLayer, BinocShiftLayer, SoftplusLayer
+
+    if nlags is None:
+        nlags = 10
+        print("  Using default nlags = %d"%nlags)
+
+    num_mfilts = NE+NI
+    mfw = 21
+    bfw = 11
+    CregM = 0.0001
+
+    # define reg values for first layer
+    reg_vals = {'center':CregM}
+    if logXTmult == 0:
+        reg_vals['d2xt'] = XTreg
+    else:
+        reg_vals['d2x'] = XTreg
+        reg_vals['d2t'] = XTreg*(10.0**logXTmult)
+
+    ### DNN PARAMETERS ###        
+    monoc_basis_par = ConvLayer.layer_dict( 
+        input_dims=[1,72,1,nlags], num_filters=num_mfilts, filter_dims=[1, mfw, 1, nlags],
+        norm_type=1,bias=False, initialize_center=True, NLtype='lin',
+        reg_vals=reg_vals)    
+
+    if sample_layer:
+        bfilt_par = BinocShiftLayer.layer_dict( 
+            num_inh= NI, LRdom=LorR, xdoms=shift_start, bias=bi_bias, NLtype='relu')
+    else:
+        bfilt_par = MaskConvLayer.layer_dict( 
+            input_dims=[num_mfilts*2,36,1,1], # reinterprets convolutional output above
+            num_filters=NE+NI, num_inh= NI, filter_dims=bfw, 
+            num_groups=num_mfilts, norm_type=1, pos_constraint=True, #window='hamming',
+            bias=bi_bias, initialize_center=True, NLtype='relu')
+
+        masks = [np.ones( [2, bfw, num_mfilts], dtype=np.float32 ), 
+                np.ones( [2, bfw, num_mfilts], dtype=np.float32 )]
+        zfw = bfw//2
+        masks[0][0,:zfw,:] = 0
+        masks[0][0,-zfw:,:] = 0
+        masks[1][1,:zfw,:] = 0
+        masks[1][1,-zfw:,:] = 0
+
+    # Two versions: first is linear because softplus comes later, second has this as last layer
+    readout_par = NDNLayer.layer_dict(
+            num_filters=1, bias=False, initialize_center=True, pos_constraint=True,
+            NLtype='lin', reg_vals={'glocalx': Greg })
+
+    stim_net = FFnetwork.ffnet_dict( layer_list = [monoc_basis_par, bfilt_par, readout_par] )
+
+    if time_covariates > 0:
+        time_pars = NDNLayer.layer_dict( 
+            input_dims=[1,1,1,time_covariates], num_filters=1, bias=False, norm_type=0, NLtype='lin')
+        frame_net = FFnetwork.ffnet_dict( xstim_n='Xframe_switch', layer_list=[time_pars] )
+        ffnets = [0,1]
+    else:
+        ffnets = [0]
+
+    # No matter what fit softplus network at the end, with num_anchors determining drift term or not
+    if num_anchors == 0:
+        beta_drift = False
+    else:
+        beta_drift = True
+
+    comb_net = SoftplusNetwork.ffnet_dict(ffnet_n=ffnets, num_anchors=num_anchors, beta_drift=beta_drift, drift_reg=Dreg, beta_reg=Dreg)
+
+    if time_covariates > 0:
+        sico = NDN(ffnet_list=[stim_net, frame_net, comb_net], seed=seed)
+    else:
+        sico = NDN(ffnet_list=[stim_net, comb_net], seed=seed)
+
+    if not sample_layer:
+        sico.networks[0].layers[1].set_mask(masks[LorR])
+
+    if target_rate is not None:
+        sico.networks[-1].layers[0].set_scale([target_rate])
+
+    return sico
+# END baseline_sico2()
+
+
+# This was the first softplus update
+def baseline_sico3(NE, NI, LorR=0, seed=100, XTreg=0.01, logXTmult=0, Greg=0.001, Dreg=1.0, nlags=None,
+                  sample_layer=True, shift_start=0, bi_bias=True, softplus_extend=True,
+                  num_anchors=0, drift_term=None,time_covariates=0 ):
+    """
+    Make standard binocular model with given size and defaults -- with drift term
+    logXTmult=0 means that d2x and d2t are the same, so use d2xt, otherwise separately define them based on factor of 10
+    """
+    from NDNT.NDN import NDN
+    from NDNT.networks import FFnetwork, CombNetwork
+    from NDNT.modules.layers import NDNLayer, ConvLayer, MaskConvLayer, BinocShiftLayer, SoftplusLayer
+
+    if nlags is None:
+        nlags = 10
+        print("  Using default nlags = %d"%nlags)
+
+    num_mfilts = NE+NI
+    mfw = 21
+    bfw = 11
+    CregM = 0.0001
+
+    # define reg values for first layer
+    reg_vals = {'center':CregM}
+    if logXTmult == 0:
+        reg_vals['d2xt'] = XTreg
+    else:
+        reg_vals['d2x'] = XTreg
+        reg_vals['d2t'] = XTreg*(10.0**logXTmult)
+        
+    monoc_basis_par = ConvLayer.layer_dict( 
+        input_dims=[1,72,1,nlags], num_filters=num_mfilts, filter_dims=[1, mfw, 1, nlags],
+        norm_type=1,bias=False, initialize_center=True, NLtype='lin',
+        reg_vals=reg_vals)    
+
+    if sample_layer:
+        bfilt_par = BinocShiftLayer.layer_dict( 
+            num_inh= NI, LRdom=LorR, xdoms=shift_start, bias=bi_bias, NLtype='relu')
+    else:
+        bfilt_par = MaskConvLayer.layer_dict( 
+            input_dims=[num_mfilts*2,36,1,1], # reinterprets convolutional output above
+            num_filters=NE+NI, num_inh= NI, filter_dims=bfw, 
+            num_groups=num_mfilts, norm_type=1, pos_constraint=True, #window='hamming',
+            bias=bi_bias, initialize_center=True, NLtype='relu')
+
+        masks = [np.ones( [2, bfw, num_mfilts], dtype=np.float32 ), 
+                np.ones( [2, bfw, num_mfilts], dtype=np.float32 )]
+        zfw = bfw//2
+        masks[0][0,:zfw,:] = 0
+        masks[0][0,-zfw:,:] = 0
+        masks[1][1,:zfw,:] = 0
+        masks[1][1,-zfw:,:] = 0
+
+    # Two versions: first is linear because softplus comes later, second has this as last layer
+    readout_par = NDNLayer.layer_dict(
+            num_filters=1, bias=False, initialize_center=True, pos_constraint=True,
+            NLtype='lin', reg_vals={'glocalx': Greg })
+    readout_parNL = NDNLayer.layer_dict(
+            num_filters=1, bias=True, initialize_center=True, pos_constraint=True,
+            NLtype='softplus', reg_vals={'glocalx': Greg }) 
+
+    if (num_anchors > 0) or (drift_term is not None):
+        # Stim net
+        #readout_par['NLtype'] = 'lin'
+        #readout_par['bias'] = False
+        stim_net = FFnetwork.ffnet_dict( layer_list = [monoc_basis_par, bfilt_par, readout_par] )
+
+        if drift_term is not None:
+            # Drift net
+            drift_pars = NDNLayer.layer_dict( 
+                input_dims=[1,1,1,len(drift_term)], num_filters=1, bias=False, norm_type=0, NLtype='lin',
+                reg_vals = {'d2t': Dreg, 'bcs':{'d2t':0} })
+            drift_net = FFnetwork.ffnet_dict( xstim_n='Xdrift', layer_list=[drift_pars] )
+
+        if time_covariates > 0:
+            time_pars = NDNLayer.layer_dict( 
+                input_dims=[1,1,1,time_covariates], num_filters=1, bias=False, norm_type=0, NLtype='lin')
+            frame_net = FFnetwork.ffnet_dict( xstim_n='Xframe_switch', layer_list=[time_pars] )
+
+        # Comb net
+        if softplus_extend:
+            comb_par = SoftplusLayer.layer_dict()
+        else:
+            comb_par = NDNLayer.layer_dict(num_filters=1, NLtype='softplus', bias=True, weights_initializer='ones')
+
+        if time_covariates > 0:
+            if num_anchors > 0:
+                comb_net = CombNetwork.ffnet_dict(ffnet_n=[0,1], num_anchors=num_anchors, bias_reg=0.02, beta_reg=0.01)
+                sico = NDN(ffnet_list=[stim_net, frame_net, comb_net], seed=seed)
+            else:
+                comb_net = FFnetwork.ffnet_dict( xstim_n=None, ffnet_n=[0,1,2], layer_list = [comb_par], ffnet_type='add')
+                sico = NDN(ffnet_list=[stim_net, drift_net, frame_net, comb_net], seed=seed)
+                sico.set_parameters(val=False, name='weight', ffnet_target=3)
+        else:
+            if num_anchors > 0:
+                comb_net = CombNetwork.ffnet_dict(ffnet_n=[0], num_anchors=num_anchors, bias_reg=0.02, beta_reg=0.01)
+                sico = NDN(ffnet_list=[stim_net, comb_net], seed=seed)
+            else:
+                comb_net = FFnetwork.ffnet_dict( xstim_n=None, ffnet_n=[0,1], layer_list = [comb_par], ffnet_type='add')
+                sico = NDN(ffnet_list=[stim_net, drift_net, comb_net], seed=seed)
+                sico.set_parameters(val=False, name='weight', ffnet_target=2)
+        
+        # Fix drift term and do not fit
+        if drift_term is not None:
+            sico.networks[1].layers[0].weight.data[:,0] = torch.tensor(drift_term.squeeze(), dtype=torch.float32)
+            sico.set_parameters(val=False, ffnet_target=1)
+    else:
+        if softplus_extend:
+            NLpar = SoftplusLayer.layer_dict()
+            sico = NDN(layer_list=[monoc_basis_par, bfilt_par, readout_par, NLpar], seed=seed)
+        else:
+            sico = NDN(layer_list=[monoc_basis_par, bfilt_par, readout_parNL], seed=seed)
+
+    if not sample_layer:
+        sico.networks[0].layers[1].set_mask(masks[LorR])
+    
+    return sico
+# END baseline_sico3()
 
 
 def check_nan( mod0 ):
