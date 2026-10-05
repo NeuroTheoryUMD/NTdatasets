@@ -102,14 +102,14 @@ def sico_path(ds_trn, ds_val, LLn_trn=0, LLn_val=0, drift_term=None, num_anchors
     mod_path[0].save_model(save_name+"1_1.ndn")
     
     # Drift check
-    utils.ss(1,2, rh=2.5)
-    plt.subplot(1,2,1)
-    plt.plot(mod_path[0].networks[-1].layers[0].drift.data.detach().cpu().numpy())
-    plt.title('Drift term')
-    plt.subplot(1,2,2)
-    plt.plot(mod_path[0].networks[-1].layers[0].beta.data.detach().cpu().numpy())
-    plt.title('Betas')
-    plt.show()
+    #utils.ss(1,2, rh=2.5)
+    #plt.subplot(1,2,1)
+    #plt.plot(mod_path[0].networks[-1].layers[0].drift.data.detach().cpu().numpy())
+    #plt.title('Drift term')
+    #plt.subplot(1,2,2)
+    #plt.plot(mod_path[0].networks[-1].layers[0].beta.data.detach().cpu().numpy())
+    #plt.title('Betas')
+    #plt.show()
 
     #no_stop=True
     continue_exc, continue_inh = True, True
@@ -681,7 +681,7 @@ def extend_binocular_model( mod0, addEorI=0, LorR=0, seed=101, top_subunits=Fals
                          logXTmult=logXTmult,
                          nlags=mod0.networks[0].layers[0].filter_dims[-1],
                          sample_layer=sample_layer, 
-                         num_anchors=mod0.networks[1].layers[0].beta.data.shape[0],
+                         num_anchors=mod0.networks[1].layers[0].drift.data.shape[0],
                          time_covariates=False).to(mod0.device)
     mod1.networks[-1].layers[0].weight.data = mod0.networks[-1].layers[0].weight.data.clone()
         # Figure out average firing rate for scaling softplus layer (if entered)
@@ -880,7 +880,7 @@ def increment_models(ds_trn, ds_val, modlist=None, addEorI=0, cull_list=True):
         sico_iter = extend_binocular_model(modlist[ii], addEorI=addEorI, seed=101+ii).to(device) 
         sico_iter.networks[0].layers[2].reg.vals['glocalx'] *= 0.1
         #if running_shifts is not None:
-        utils.fit_lbfgs( sico_iter, ds_trn[:], verbose=0, max_iter=2000, line_search=None)  # this seems fragile w Strong-Wolfe
+        utils.fit_lbfgs( sico_iter, ds_trn[:], verbose=0, max_iter=2000, line_search='strong_wolfe')  # this seems fragile w Strong-Wolfe
 
         # Centers and refits
         sico_iter.networks[0].layers[2].reg.vals['glocalx'] *= 10
@@ -891,18 +891,18 @@ def increment_models(ds_trn, ds_val, modlist=None, addEorI=0, cull_list=True):
                 num_over = np.sum(sico_iter.networks[0].layers[1].sigmas.data.cpu().numpy() > 1.0)
                 print("       Highest sigma %0.2f (%d over 1.0). Decreasing to 1"%(np.max(sico_iter.networks[0].layers[1].sigmas.data.cpu().numpy()), num_over))
                 sico_iter.networks[0].layers[1].fit_shifts(val=True, fixed_sigmas=True, sigma0 = 1.0)
-                utils.fit_lbfgs( sico_iter, ds_trn[:], verbose=0, max_iter=2000, line_search=None)
+                utils.fit_lbfgs( sico_iter, ds_trn[:], verbose=0, max_iter=2000, line_search='strong_wolfe')
             if np.max(sico_iter.networks[0].layers[1].sigmas.data.cpu().numpy()) > 0.6:
                 num_over = np.sum(sico_iter.networks[0].layers[1].sigmas.data.cpu().numpy() > 0.6)
                 print("       Highest sigma %0.2f (%d over 0.6). Decreasing to 0.6"%(np.max(sico_iter.networks[0].layers[1].sigmas.data.cpu().numpy()), num_over))
                 sico_iter.networks[0].layers[1].fit_shifts(val=True, fixed_sigmas=True, sigma0 = 0.6)
-                utils.fit_lbfgs( sico_iter, ds_trn[:], verbose=0, max_iter=2000, line_search=None)
+                utils.fit_lbfgs( sico_iter, ds_trn[:], verbose=0, max_iter=2000, line_search='strong_wolfe')
             sico_iter.networks[0].layers[1].fit_shifts(val=False)
         else:
             sico_iter = refine_binocular( sico_iter, ds_trn, to_plot=False, device=device )
             sico_iter = center_model(sico_iter, include_binoc=True, verbose=False)
         
-        utils.fit_lbfgs( sico_iter, ds_trn[:], verbose=0, max_iter=2000, line_search=None)
+        utils.fit_lbfgs( sico_iter, ds_trn[:], verbose=0, max_iter=2000, line_search='strong_wolfe')
         #print("   Refinement time: %0.2f min"%( (t2-t1)/60 ))
         LLnew[ii,0] = sico_iter.eval_models(ds_trn[:], null_adjusted=False)[0] 
         LLnew[ii,1] = sico_iter.eval_models(ds_val[:], null_adjusted=False)[0]
@@ -978,7 +978,7 @@ def produce_best_sampler_model(
                                     sample_layer=True, shift_start=running_shifts,
                                     XTreg=XTreg, logXTmult=logXTmult, Greg=Greg/10, num_anchors=num_anchors ).to(device)
         #sico_iter.list_parameters()
-        utils.fit_lbfgs( sico_iter, ds_trn[:], verbose=0, max_iter=2000, line_search=None)  # this seems fragile w Strong-Wolfe
+        utils.fit_lbfgs( sico_iter, ds_trn[:], verbose=0, max_iter=2000, line_search='strong_wolfe')  # this seems fragile w Strong-Wolfe
         # Centers and refits
         sico_iter.networks[0].layers[2].reg.vals['glocalx'] = Greg
         sico_iter = center_model(sico_iter, include_binoc=True, verbose=False)
@@ -992,9 +992,8 @@ def produce_best_sampler_model(
         #    print("       Highest sigma %0.2f. Decreasing to 0.6"%np.max(sico_iter.networks[0].layers[1].sigmas.data.cpu().numpy()))
         #    sico_iter.networks[0].layers[1].fit_shifts(val=True, fixed_sigmas=True, sigma0 = 0.6)
         #    utils.fit_lbfgs( sico_iter, ds_trn[:], verbose=0, max_iter=2000, line_search=None)
-        
         sico_iter.networks[0].layers[1].fit_shifts(val=False)
-        utils.fit_lbfgs( sico_iter, ds_trn[:], verbose=0, max_iter=2000, line_search=None)
+        utils.fit_lbfgs( sico_iter, ds_trn[:], verbose=0, max_iter=2000, line_search='strong_wolfe')  # this seems fragile w Strong-Wolfe
         t2 = time()
         #print("   Refinement time: %0.2f min"%( (t2-t1)/60 ))
         LLs[ii,0] = LLn_val - sico_iter.eval_models(ds_val[:], null_adjusted=False)[0]
@@ -1165,7 +1164,7 @@ def baseline_sico(NE, NI, LorR=0, seed=100, XTreg=0.01, logXTmult=0, Greg=0.001,
 # END baseline_sico()
 
 
-def baseline_sico2(NE, NI, LorR=0, seed=100, XTreg=0.01, logXTmult=0, Greg=0.001, Dreg=0.001, nlags=None,
+def baseline_sico2(NE, NI, LorR=0, seed=100, XTreg=0.01, logXTmult=0, Greg=0.001, Dreg=0.01, nlags=None,
                   sample_layer=True, shift_start=0, bi_bias=True,
                   num_anchors=0, time_covariates=0, target_rate=None ):
     """
@@ -1238,6 +1237,8 @@ def baseline_sico2(NE, NI, LorR=0, seed=100, XTreg=0.01, logXTmult=0, Greg=0.001
         beta_drift = False
     else:
         beta_drift = True
+    ### OVERWRITE -- we just dont want it: doesn't seem to really help
+    beta_drift = False
 
     comb_net = SoftplusNetwork.ffnet_dict(ffnet_n=ffnets, num_anchors=num_anchors, beta_drift=beta_drift, drift_reg=Dreg, beta_reg=Dreg)
 
@@ -1467,6 +1468,7 @@ def binoc_path_diagnostics( modlist, dataset, cell_n=None, verbose=True ):
     If LLnull is None, will compute it from the first model in the list.
     """
     import NTdatasets.cumming.BinocUtils as BU
+    from NDNT.modules.layers import BinocShiftLayer
     assert cell_n is not None, "Must enter cell_n as check"
     dataset.set_cells(cell_n)
     LLnulls = dataset.compute_nullLLs(cell_n, verbose=False)
@@ -1485,6 +1487,10 @@ def binoc_path_diagnostics( modlist, dataset, cell_n=None, verbose=True ):
         NI = modlist[ii].networks[0].layers[1].num_inh
         NE = modlist[ii].networks[0].layers[1].num_filters-NI
         num_subs[ii,:] = [NE+NI, NE, NI]
+
+        if isinstance(modlist[ii].networks[0].layers[1], BinocShiftLayer):
+            modlist[ii].networks[0].layers[1].sample = False
+
         LLs[ii,0] = LLnulls['train'] - modlist[ii].eval_models(dataset[dataset.train_inds], null_adjusted=False)[0]
         LLs[ii,1] = LLnulls['valA'] - modlist[ii].eval_models(dataset[dataset.val_indsA], null_adjusted=False)[0]
         LLs[ii,2] = LLnulls['valB'] - modlist[ii].eval_models(dataset[dataset.val_indsB], null_adjusted=False)[0]
